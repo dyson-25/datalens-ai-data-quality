@@ -1,9 +1,25 @@
 # Known limitations
 
-Initial implementation in progress; no application acceptance criteria claimed complete.
+The deterministic backend and optional AI integration are implemented and tested. See [validation evidence](VALIDATION.md) for the current release gates.
 
-- Docker executable absent at environment inspection: image build pending an available Docker engine.
-- No Render account/deployment authorization available: prepare configuration, do not claim live deployment.
-- Free-provider service availability is external and cannot be guaranteed; core must work offline.
-- In-process jobs cannot survive restart. Public demonstration storage is ephemeral.
-- Available system memory is shared; conservative row/column/upload limits do not guarantee capacity.
+## External release gates
+
+- Docker build was attempted but Docker is not installed and no daemon/socket or alternative container engine is available. **Image build remains unverified.**
+- No Render account/deployment authorization is available. Configuration is prepared; **no public deployment is claimed**.
+- Free-provider availability is external and cannot be guaranteed. One synthetic OpenRouter request succeeded; core processing remains functional without AI.
+
+## Deliberate boundaries
+
+- Single server process/worker only. A global processing gate bounds expensive work; busy requests return 429. This is not a multi-tenant high-concurrency service.
+- Ingestion runs in a bounded background job; timeout cancellation is cooperative, not process isolation. A stuck native parser can hold the slot until it returns. Other expensive operations are synchronous and bounded by dataset limits, not hard execution deadlines.
+- Jobs do not resume after restart. Completed local snapshots survive process restart until TTL expiration; free-host filesystems are ephemeral and can lose all data on restart/redeploy/spindown.
+- Conservative upload/row/column/memory/storage limits reduce risk but cannot guarantee memory capacity on a shared machine. Large-file streaming, distributed processing and durable cloud datasets are not implemented.
+- Dates require explicit user-approved conversion. Leading-zero identifiers and literal null tokens are preserved. Unquoted CSV blanks are null; quoted empty strings remain strings. XLSX formulas are preserved as untrusted text, not evaluated. Mixed Excel scalar columns may use lossless string representations for safe Parquet storage.
+- Statistical anomalies are review suggestions, not proven errors. IsolationForest is opt-in and bounded. Tiny planted fixtures do not establish real-world detection accuracy.
+- Exported spreadsheets neutralize formula-like text; safe exported text can therefore differ from its underlying snapshot representation. Originals and snapshots remain untouched.
+- PDF output uses the browser's print/save-as-PDF workflow on the HTML report, not a server-side PDF renderer. Reference Python/SQL is downloaded, never executed by the application. SQL documents transformations that cannot be translated exactly.
+- AI receives only anonymized aggregate counts/types, not column names or records. This is optional external processing, not an offline language model. No paid models or paid fallback are permitted.
+- Capability possession grants dataset access. There are no accounts, role-based access control, cross-device token recovery or encrypted-at-rest dataset storage. Use a trusted local machine and HTTPS for authorized public hosting.
+- API docs are a locally bundled read-only OpenAPI viewer, not an interactive Swagger request console. Public/cloud `/docs` is disabled; the OpenAPI schema is still available.
+- Some dynamic analysis responses use dictionaries; important metadata/profile/job responses and mutating request bodies have explicit Pydantic validation.
+- No guarantee of permanently free third-party hosting: provider quotas, terms, spending controls and billing settings remain the account owner's responsibility.

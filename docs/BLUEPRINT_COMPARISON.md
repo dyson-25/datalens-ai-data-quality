@@ -17,7 +17,7 @@ Authority: current review constraints govern this task; the master governs the p
 - PDF metadata: 47 pages; 709,037 bytes; PDF 1.4; Letter; title beginning “PROJECT MASTER BLUEPRINT: DATALENS”; producer Skia/PDF m159 Google Docs Renderer.
 - PDF SHA-256: `4d50aacc7b88f73d76a26608fa35bcad06199b6328369c0cd977ac40275af3ce`.
 - The original PDF was only inspected read-only, not edited, renamed, moved, uploaded, staged, or published. No external service was used for this review.
-- `.env` was not accessed. Only this comparison document was created. No implementation or other documentation edits were made.
+- `.env` was not accessed. Only this comparison document was created/updated in the project. The visual follow-up generated private PNGs in session artifacts only; no implementation or other documentation edits were made.
 - Public exclusion of the exact PDF path remains a release prerequisite under master §1.6; this scoped review did not inspect or change `.gitignore` and makes no claim that exclusion is currently configured.
 
 ## 1. Binding conflict decisions
@@ -152,7 +152,23 @@ These are explicit dispositions, not permission to postpone master-required feat
 
 ## 4. All-page review ledger
 
-Page boundaries were checked against the extraction's form-feed separators and the PDF's 47-page metadata. Diagram source and wireframe text were included in the review. Some multi-column algorithm-table formulas are fragmented in extraction; decisions use the complete surrounding prose and master §10 rather than treating broken table fragments as authoritative mathematics. This is an all-page **text** review, not a claim of rendering every PDF page.
+Page boundaries were checked against the extraction's form-feed separators and the PDF's 47-page metadata. Diagram source and wireframe text were included in the review. All 47 pages received text review; the targeted visual follow-up below additionally inspected the important algorithm and architecture pages, not every PDF page.
+
+### Targeted visual follow-up — 2026-11-13
+
+Rendered and visually inspected **10 original PDF pages** using `pdftoppm -png -singlefile -scale-to 1800`: **13–14** (algorithm table and explanatory continuation), **21–23** (system architecture), **24–25** (AI sequence), and **30–32** (entity relationships/schema). Images are private session artifacts under `/home/dyson/.copilot/session-state/84845c46-b9e3-4cce-aa11-ece2a493931d/files/blueprint-visual-review/page-<number>.png`; none were placed in the repository or published.
+
+| Visual evidence | Finding and effect on comparison |
+|---|---|
+| Algorithm table, p. 13 | **The original PDF itself is malformed**, not merely its text extraction: ordinary Z-score and MAD formula fragments occupy unrelated table columns, and raw LaTeX commands are printed literally. The apparent MAD “default threshold” cell is a denominator fragment, not a usable threshold. Rendering does not recover a hidden intact formula or missing threshold. |
+| Algorithm continuation/prose, p. 14 | Confirms readable proposals already present in the extraction: IQR factors 1.5/3.0, MAD absolute-score threshold 3.5 in the prose, Isolation Forest with 100 trees, seed 42 and temporary median imputation. The table also shows contamination `auto` or 0.01–0.10. These are supplementary proposals, not newly mandated defaults. Automatic skewness routing, unrestricted threads, LOF and classifying extreme scores as confirmed errors remain rejected. |
+| System architecture, pp. 21–23 | The PDF prints **Mermaid source text**, not a rendered node/edge graphic. Its UI/API/core/AI/storage groups and connecting statements match the reviewed extraction. No image-only component or dependency was missing. |
+| AI sequence, pp. 24–25 | Also printed Mermaid source. Cache lookup, primary guard, provider calls, cooldown and fallback branches were already captured. No omitted branch changes the decision to use verified zero-cost OpenRouter with deterministic fallback, without Ollama or raw samples. |
+| Entity relationships, pp. 30–32 | Printed Mermaid/schema text, already represented in extraction. An `EXPORT_LOGS` relationship is present without a corresponding entity definition; there is no hidden job or separate authorization-token schema. This confirms the earlier conclusion that the seven-table proposal is incomplete, not a final database contract. |
+
+**Material recovery outcome:** no previously missing product requirement, usable mathematical expression, architecture dependency or schema field was recovered. The material clarification is that the broken math table and unrendered diagrams are defects/limitations of the source PDF itself. OCR would not repair them. Keep the existing master-precedence decisions; define and test canonical IQR/MAD mathematics during implementation rather than reconstructing an authoritative formula from the damaged cells. No architectural scope change is warranted.
+
+The PDF SHA-256 was checked before and after rendering and remained identical to the preservation evidence above. This follow-up changes only this comparison document and creates the requested session images; `.env` remains untouched.
 
 | PDF page | Extracted lines | Reviewed subject and disposition |
 |---|---:|---|

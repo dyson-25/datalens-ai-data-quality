@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: datalens
+    runtime: docker
+    plan: free
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: APP_ENV
+        value: public
+      - key: AI_ENABLED
+        value: "false"
+      - key: AI_ZERO_COST_MODE
+        value: "true"
+      - key: STORAGE_ROOT
+        value: /app/storage
+      - key: MAX_UPLOAD_MB
+        value: "5"
+      - key: MAX_ROWS
+        value: "10000"
+      - key: MAX_COLUMNS
+        value: "50"
+      - key: MAX_SESSIONS
+        value: "10"
+      - key: MAX_STORAGE_MB
+        value: "256"
+      - key: SESSION_TTL_MINUTES
+        value: "60"
+      - key: JOB_TIMEOUT_SECONDS
+        value: "120"
