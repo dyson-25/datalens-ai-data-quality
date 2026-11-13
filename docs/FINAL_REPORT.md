@@ -66,12 +66,13 @@ Optional HTTPX gateway permits only `openrouter/free`, verifies zero pricing, co
 - `36a1542` — zero-cost optional AI gateway.
 - `09a7f0a` — deterministic engines and synthetic fixtures.
 - `7e3857c` — integrated workbench, browser workflows, screenshots and benchmarks.
+- `9c63877` — release documentation, measured evidence and deployment configuration.
 
-Release documentation/configuration follows in the repository history. Every milestone was staged explicitly and checked for private paths/secrets before commit.
+Publication-status documentation follows in the repository history. Every milestone was staged explicitly and checked for private paths/secrets before commit.
 
 ## 12. GitHub
 
-Target: [dyson-25/datalens-ai-data-quality](https://github.com/dyson-25/datalens-ai-data-quality). Remote read access succeeded. Publication is pending the release-documentation commit and authenticated push; no successful push is claimed yet.
+**Published successfully** to [dyson-25/datalens-ai-data-quality](https://github.com/dyson-25/datalens-ai-data-quality), branch `main`. Initial HTTPS push failed because interactive username prompting was disabled. Existing SSH authentication succeeded without changing stored remote settings. The remote branch was verified against local commit `9c63877` after publication; the final documentation update is published through the same path. This publishes source and evidence, not a running web deployment.
 
 ## 13. Docker
 
@@ -85,7 +86,12 @@ Free-plan blueprint and deployment instructions are prepared with conservative p
 
 1. Use a machine with Docker to build and run the image, then verify `/api/v1/health`, upload/clean/export and memory behavior.
 2. Authorize Render deployment from the repository, select the free plan, inspect billing/spending settings and verify the actual public URL before sharing it. Never upload private data to a public demonstration.
-3. If publication requires authentication, authenticate Git locally and run `git push -u origin main`; never paste credentials into chat.
+3. Future pushes can reuse the verified SSH path without changing the HTTPS fetch URL:
+
+```bash
+git -c remote.origin.pushurl=git@github.com:dyson-25/datalens-ai-data-quality.git push origin main
+```
+
 4. To run locally:
 
 ```bash

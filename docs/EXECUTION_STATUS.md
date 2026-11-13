@@ -11,7 +11,7 @@ Verified **2026-11-13**. The local application is implemented and tested; extern
 | Local verification | Passed | 395 Python tests, 6 Chromium workflows, build/check/Ruff and benchmark |
 | Security code review | Complete | Two bounded independent scopes; no vulnerabilities reported |
 | Documentation and deployment configuration | Prepared | Installation/API/algorithms/security/development/deployment documentation, Dockerfile and Render blueprint |
-| GitHub publication | Pending | Remote readable; release commit/push still to be performed |
+| GitHub publication | Verified | Published `main` through existing SSH authentication; remote revision matched local `9c63877` |
 | Docker image execution | Blocked | Attempted build exited 127: Docker unavailable; no alternative engine/daemon |
 | Render public deployment | Blocked | No authorized deployment/account access; no public URL claimed |
 
@@ -27,8 +27,9 @@ Final Python regression: **395 passed in 12.05s**. Chromium: **6 passed in 25.4s
 - `36a1542` — zero-cost optional AI gateway.
 - `09a7f0a` — deterministic engines and synthetic fixtures.
 - `7e3857c` — integrated offline workbench and browser verification.
+- `9c63877` — verified release documentation and deployment boundaries.
 
-Release-documentation commits follow these milestones; consult Git history for exact final revision.
+Publication-status commits follow these milestones; consult Git history for exact final revision. HTTPS prompting was unavailable; an SSH push using existing local authentication succeeded without changing the stored remote URL.
 
 ## AI verification
 
@@ -36,4 +37,4 @@ Existing private configuration was preserved. Live verification used only synthe
 
 ## Remaining release gates
 
-Publish the prepared commit history, build/run on a Docker-capable machine, and authorize/verify the Render deployment. Container and public-hosting acceptance must not be marked passed based only on local native tests or static configuration. Details, measured performance and exact manual steps are in [validation](VALIDATION.md), [final engineering report](FINAL_REPORT.md) and [deployment](../DEPLOYMENT.md).
+Build/run on a Docker-capable machine and authorize/verify the Render deployment. GitHub publication is complete; it is not a running service. Container and public-hosting acceptance must not be marked passed based only on local native tests or static configuration. Details, measured performance and exact manual steps are in [validation](VALIDATION.md), [final engineering report](FINAL_REPORT.md) and [deployment](../DEPLOYMENT.md).

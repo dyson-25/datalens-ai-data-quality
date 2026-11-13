@@ -10,7 +10,7 @@ Independent bounded reviews of the core and engines/frontend/container configura
 
 On the same date, a minimal synthetic aggregate-only OpenRouter check returned `source: ai`, no error reason and a nonempty explanation from `openrouter/free`. This is a point-in-time connection check, not an availability guarantee. No raw data or credentials were disclosed.
 
-The Python 3.12 release lock has been generated. [docs/VALIDATION.md](docs/VALIDATION.md) is the consolidated evidence record, being updated by the parent. Docker build was explicitly attempted and exited **127 (`docker` not found)**; no image build, container execution or deployment success is claimed. Backend/browser evidence and bounded security reviews are complete; Git push and authenticated Render deployment remain pending.
+The Python 3.12 release lock has been generated. [docs/VALIDATION.md](docs/VALIDATION.md) is the consolidated evidence record, being updated by the parent. Docker build was explicitly attempted and exited **127 (`docker` not found)**; no image build, container execution or deployment success is claimed. Backend/browser evidence and bounded security reviews are complete. The initial HTTPS push failed with exit **128**, but the parent recovered using existing SSH authentication: the push succeeded, and an HTTPS remote-branch check matched the local HEAD at verification time. **Repository publication is verified**; the original HTTPS remote was preserved. Final follow-up documentation still requires its separate commit/push. See [future SSH push and verification](DEPLOYMENT.md#local-authentication-and-manual-push). Render authentication remains unavailable.
 
 | Area | Intended behavior / qualification |
 | --- | --- |
@@ -61,3 +61,4 @@ Captured by the verified local Chromium workflow, not a hosted deployment:
 - [Deployment, cost caveats, and verification](DEPLOYMENT.md)
 - [Roadmap and unsupported capabilities](ROADMAP.md)
 - [Validation evidence — tests and bounded reviews complete; deployment blocked](docs/VALIDATION.md)
+- [Final report — 15-category delivery summary](docs/FINAL_REPORT.md)

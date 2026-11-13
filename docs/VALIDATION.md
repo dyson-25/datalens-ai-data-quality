@@ -84,6 +84,6 @@ Private environment, virtual environment, storage and original planning PDF rema
 
 ## External release gates
 
-- Docker: executable/socket unavailable; configuration prepared, **image build unverified**.
-- GitHub: remote readable; push pending final regression and publication.
+- Docker: actual build attempt exited 127 because the executable was unavailable; no daemon/socket or alternative engine available. Configuration prepared, **image build unverified**.
+- GitHub: **published** to `dyson-25/datalens-ai-data-quality`, branch `main`. Initial HTTPS push failed with disabled username prompting; existing SSH authentication succeeded. `git ls-remote origin refs/heads/main` matched local `9c6387763d0e3d19351ec35c3b7009d78ed1952a` after the release push. Subsequent documentation status commits use the same verified publication path.
 - Render: no authorized deployment access; **not deployed**.

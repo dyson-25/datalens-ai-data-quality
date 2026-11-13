@@ -4,7 +4,7 @@
 
 The Dockerfile and optional Render blueprint are configuration artifacts, **not proof of a successful build or deployment**. The parent explicitly attempted Docker build; it exited **127 because `docker` was not found**. `gh` and deployment authentication are also unavailable. No image build, live deployment URL or container smoke-test success is asserted.
 
-The parent verified the final release regression: **395 pytest tests passed in 12.05 seconds**, Ruff was clean, `npm run build` and `npm run check` succeeded, and **6 real-backend Chromium tests passed in 25.4 seconds**. A synthetic local benchmark and six actual synthetic screenshots are recorded. Independent bounded core and engines/frontend/container-configuration security reviews reported no vulnerabilities; this is not certification. These are not container-execution or Render-host results. **Git push is still pending**, and authenticated deployment remains blocked. See [docs/VALIDATION.md](docs/VALIDATION.md).
+The parent verified the final release regression: **395 pytest tests passed in 12.05 seconds**, Ruff was clean, `npm run build` and `npm run check` succeeded, and **6 real-backend Chromium tests passed in 25.4 seconds**. A synthetic local benchmark and six actual synthetic screenshots are recorded. Independent bounded core and engines/frontend/container-configuration security reviews reported no vulnerabilities; this is not certification. These are not container-execution or Render-host results. The initial HTTPS push failed with exit 128 because terminal prompts were disabled. The parent recovered with existing SSH authentication: push succeeded and an HTTPS `ls-remote` check matched the local HEAD at verification time. **Repository publication is verified**, with the original HTTPS remote preserved. These follow-up documentation edits still await their separate commit/push; authenticated Render deployment remains blocked. See [docs/VALIDATION.md](docs/VALIDATION.md).
 
 The release owner generated `requirements.lock.txt` from the supported Python 3.12 environment and reported a successful `pip check`. The Dockerfile requires this pinned file and intentionally fails if it is absent; it does not silently use the ranged `requirements.txt`. Dependency resolution is not a container-build result. For local-only setup, [INSTALLATION.md](INSTALLATION.md) documents a development fallback.
 
@@ -47,6 +47,33 @@ docker stop datalens-local
 
 To check dynamic port binding, repeat with `-e PORT=8080 -p 8080:8080` and request port 8080. Do not combine the new mapping with the old `-p` flag. Inspect the final image for prohibited files and confirm the process runs as UID 10001. A host bind mount needs write permissions for that UID and a writable `tmp/` subdirectory; no volume is mounted by the example or Render blueprint. Container replacement loses unmounted state.
 
+## Local authentication and manual push
+
+The initial noninteractive HTTPS push failed with exit 128 because Git could not obtain a username while terminal prompts were disabled. This was **recovered**, not a current publication blocker. The parent successfully used existing SSH authentication with batch mode and strict host-key verification:
+
+```bash
+GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10' git -c remote.origin.pushurl=git@github.com:dyson-25/datalens-ai-data-quality.git push -u origin main
+```
+
+An HTTPS `git ls-remote origin refs/heads/main` check then matched the local HEAD. This verifies the committed branch at that time, not future uncommitted documentation. The command-scoped push URL preserved the original HTTPS remote; no stored credential or remote configuration change was needed.
+
+For future pushes from the same authorized environment using its existing SSH authentication:
+
+```bash
+git -c remote.origin.pushurl=git@github.com:dyson-25/datalens-ai-data-quality.git push origin main
+```
+
+Review intended commits and exclude private `.env`, credentials, uploads and PDFs before pushing. Keep host-key verification enabled and never place credential values in URLs, commands or logs. These follow-up documentation edits are not committed or pushed by this task; the parent will perform that separate status update.
+
+After each subsequent push, verify its exit status and compare the current local branch with the remote branch rather than relying on a hardcoded release hash:
+
+```bash
+git rev-parse HEAD
+git ls-remote origin refs/heads/main
+```
+
+Repository publication does not establish a running application. Docker exit 127 and Render authentication blockers are unchanged.
+
 ## Optional Render free blueprint
 
 1. Review all publication inputs; exclude private `.env`, PDFs, storage and credentials from the repository. Ensure the Python and npm locks and runtime frontend sources are present.
@@ -87,11 +114,12 @@ There are no permanent accounts. Each dataset's separate capability header is re
 - [x] Parent verified 395 Python tests in 12.05 seconds, clean Ruff checks and the synthetic benchmark.
 - [x] Parent verified build/syntax checks and 6 real-backend Chromium tests in 25.4 seconds; six synthetic screenshots exist.
 - [x] Independent bounded core and engines/frontend/container-configuration reviews completed without reported vulnerabilities.
-- [ ] Git push completed and remote publication verified.
+- [x] Initial HTTPS failure recovered through existing SSH; push succeeded and HTTPS remote-branch verification matched the local HEAD at that time.
+- [ ] Follow-up documentation status changes separately committed, pushed and verified.
 - [ ] Node 22 build, final image build and nonroot runtime smoke test executed.
 - [ ] Private `.env`, PDFs, storage and reports absent from publication and image.
 - [ ] Dynamic `PORT`, health route and end-to-end synthetic workflow verified.
 - [ ] Actual Render billing controls and free plan confirmed by an authenticated operator.
 - [ ] Actual deployment outcome and remaining limitations recorded in `docs/VALIDATION.md`.
 
-Verified dependency/backend/browser results and completed bounded reviews are checked. Git push and successful container/deployment execution remain pending; the Docker build attempt failed with exit 127 because Docker was unavailable. Render authentication is unavailable.
+Verified dependency/backend/browser results, completed bounded reviews and repository publication are checked. The initial HTTPS failure was recovered through existing SSH authentication, preserving the original remote. Follow-up documentation still needs its separate commit/push. The Docker build attempt failed with exit 127 because Docker was unavailable. Render authentication is unavailable; container/deployment execution remains unverified.
