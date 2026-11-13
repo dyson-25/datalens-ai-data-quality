@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -42,6 +42,23 @@ class AnomalyRequest(StrictModel):
     method: Literal['iqr', 'mad', 'isolation_forest'] = 'iqr'
     columns: list[str] = Field(min_length=1, max_length=20)
     threshold: float | None = Field(default=None, gt=0, le=20, allow_inf_nan=False)
+
+
+class DomainRule(StrictModel):
+    min: float | None = Field(default=None, allow_inf_nan=False)
+    max: float | None = Field(default=None, allow_inf_nan=False)
+
+    @model_validator(mode='after')
+    def check_bounds(self):
+        if self.min is None and self.max is None:
+            raise ValueError('Specify a minimum or maximum.')
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError('Minimum cannot exceed maximum.')
+        return self
+
+
+class DomainQualityRequest(StrictModel):
+    domain_rules: dict[str, DomainRule] = Field(min_length=1, max_length=100)
 
 
 class EmptyRequest(StrictModel):

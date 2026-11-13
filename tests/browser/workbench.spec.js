@@ -1,0 +1,251 @@
+import { test, expect } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+
+async function capture(page, name) {
+  if (process.env.UPDATE_SCREENSHOTS !== '1') return;
+  await mkdir('docs/screenshots', { recursive: true });
+  await page.screenshot({ path: `docs/screenshots/${name}.png`, fullPage: false, animations: 'disabled' });
+}
+
+async function ready(page) {
+  await page.goto('/');
+  await expect(page.getByText('Local engine connected')).toBeVisible();
+  await expect(page.locator('#main')).toHaveAttribute('aria-busy', 'false');
+}
+async function idle(page) { await expect(page.locator('#main')).toHaveAttribute('aria-busy', 'false', { timeout: 90000 }); }
+async function navigate(page, hash) { await page.goto(`/#${hash}`); await idle(page); }
+async function ingest(page) {
+  await page.getByRole('button', { name: 'Ingest dataset', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'A clearer view of your data.' })).toBeVisible({ timeout: 90000 });
+  await idle(page);
+  await expect(page.locator('#error')).toBeHidden();
+}
+async function datasetGet(page, suffix = '') {
+  return page.evaluate(async suffix => {
+    const session = JSON.parse(sessionStorage.getItem('datalens.session'));
+    const response = await fetch(`/api/v1/datasets/${session.dataset_id}${suffix}`, { headers: { 'X-Session-Token': session.token } });
+    if (!response.ok) throw new Error(`Dataset request failed: ${response.status}`);
+    return response.json();
+  }, suffix);
+}
+async function approve(page) {
+  await page.getByLabel('I reviewed the operation, affected rows, and potential data loss. I approve this exact change.').check();
+  await page.getByRole('button', { name: 'Approve & apply' }).click();
+  await page.getByRole('button', { name: 'Apply change', exact: true }).click();
+  await idle(page);
+  await expect(page.locator('#error')).toBeHidden();
+}
+async function downloadText(page, name) {
+  const event = page.waitForEvent('download');
+  await page.getByRole('button', { name, exact: true }).click();
+  const download = await event;
+  const stream = await download.createReadStream();
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  await idle(page);
+  const bytes = Buffer.concat(chunks);
+  return { text: bytes.toString('utf8'), bytes, name: download.suggestedFilename() };
+}
+
+test.afterEach(async ({ page }) => {
+  await page.evaluate(async () => {
+    const session = JSON.parse(sessionStorage.getItem('datalens.session') || 'null');
+    if (session) await fetch(`/api/v1/datasets/${session.dataset_id}`, { method: 'DELETE', headers: { 'X-Session-Token': session.token } });
+  }).catch(() => {});
+});
+
+test('sample → profile → approved cleaning → undo/redo/restore → authorized exports', async ({ page }) => {
+  const errors = [];
+  const datasetRequests = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => { if (request.url().includes('/api/v1/datasets/')) datasetRequests.push(request); });
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await ready(page);
+  await page.getByRole('button', { name: 'Explore sample: Quality Issues', exact: true }).click();
+  await idle(page);
+  await ingest(page);
+  const baseline = await datasetGet(page, '/profile');
+  const original = await datasetGet(page);
+  expect(original.active_version).toBe(0);
+  expect(original.revision).toBeGreaterThanOrEqual(1);
+  expect(baseline.columns).toBeGreaterThan(1);
+  await expect(page.locator('canvas').first()).toBeVisible();
+  await capture(page, 'dashboard-dark');
+  await page.getByRole('button', { name: 'Switch to light theme' }).click();
+  await capture(page, 'dashboard-light');
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+  await page.getByLabel('Profiled column').selectOption('amount');
+  await page.locator('#column-detail').scrollIntoViewIfNeeded();
+  await capture(page, 'column-profiler');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await capture(page, 'mobile-overview');
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page.getByRole('link', { name: /Quality & anomalies/ }).click();
+  await capture(page, 'quality-lab');
+  await page.getByRole('link', { name: /Cleaning studio/ }).click();
+  await page.getByLabel('Operation', { exact: true }).selectOption('drop_column');
+  await page.getByLabel('Target column').selectOption(baseline.column_profiles[0].name);
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await expect(page.getByRole('heading', { name: 'Review this exact change' })).toBeVisible();
+  await idle(page);
+  expect((await datasetGet(page)).active_version).toBe(0);
+  await expect(page.getByRole('button', { name: 'Approve & apply' })).toBeDisabled();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await capture(page, 'cleaning-studio');
+  await approve(page);
+  expect((await datasetGet(page, '/profile')).columns).toBe(baseline.columns - 1);
+  expect((await datasetGet(page)).revision).toBe(original.revision + 1);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await idle(page);
+  expect((await datasetGet(page)).active_version).toBe(0);
+  expect((await datasetGet(page, '/profile')).columns).toBe(baseline.columns);
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await idle(page);
+  expect((await datasetGet(page)).active_version).toBe(1);
+  await page.getByRole('button', { name: 'Restore v0', exact: true }).click();
+  await page.getByRole('button', { name: 'Restore version', exact: true }).click();
+  await idle(page);
+  const restored = await datasetGet(page);
+  expect(restored.active_version).toBe(0);
+  expect(restored.revision).toBe(original.revision + 4);
+  await page.getByRole('link', { name: /Exports & reports/ }).click();
+  const csv = await downloadText(page, 'Download CSV');
+  expect(csv.name).toMatch(/-v0\.csv$/);
+  expect(csv.text.split('\n').length).toBeGreaterThan(1);
+  const json = await downloadText(page, 'Download JSON');
+  expect(() => JSON.parse(json.text)).not.toThrow();
+  await page.addInitScript(() => { window.print = () => { window.__printRequested = true; }; });
+  await page.getByRole('button', { name: 'Print report / Save as PDF' }).click();
+  await idle(page);
+  await expect(page.locator('#error')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => document.querySelector('iframe[title="Printable quality report"]')?.contentWindow?.__printRequested === true)).toBe(true);
+  expect(await page.locator('iframe[title="Printable quality report"]').getAttribute('sandbox')).not.toContain('allow-scripts');
+  const session = await page.evaluate(() => JSON.parse(sessionStorage.getItem('datalens.session')));
+  expect(await page.evaluate(() => localStorage.getItem('datalens.session'))).toBeNull();
+  for (const request of datasetRequests) {
+    expect(request.url()).not.toContain(session.token);
+    if (!request.url().includes('/datasets/sample/')) expect(request.headers()['x-session-token']).toBe(session.token);
+  }
+  expect(errors).toEqual([]);
+});
+
+test('CSV upload preserves raw values, trim changes only the reviewed column, preview invalidates on edit', async ({ page }) => {
+  await ready(page);
+  await page.getByLabel('Choose CSV or Excel file').setInputFiles({ name: 'customers.csv', mimeType: 'text/csv', buffer: Buffer.from('name,amount,category\n  Alice  ,10,A\n Bob ,20,B\nCara,30,A\n') });
+  await idle(page);
+  await page.getByLabel('Header row', { exact: true }).selectOption('0');
+  await ingest(page);
+  let rejected = false;
+  await page.route('**/api/v1/datasets/*/profile', async route => {
+    if (!rejected) { rejected = true; await route.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: { code: 'busy', message: 'Engine busy' } }) }); }
+    else await route.continue();
+  });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await idle(page);
+  expect(rejected).toBe(true);
+  await expect(page.locator('#error')).toBeHidden();
+  await page.getByRole('link', { name: /Cleaning studio/ }).click();
+  await page.getByLabel('Operation', { exact: true }).selectOption('trim');
+  await page.getByLabel('Target column').selectOption('name');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await expect(page.getByRole('region', { name: 'Cleaning change preview' })).toContainText('Alice');
+  await page.getByLabel('Target column').selectOption('category');
+  await expect(page.getByRole('button', { name: 'Approve & apply' })).toHaveCount(0);
+  await page.getByLabel('Target column').selectOption('name');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page); await approve(page);
+  await page.getByRole('link', { name: /Exports & reports/ }).click();
+  const csv = await downloadText(page, 'Download CSV');
+  expect(csv.text).toMatch(/"?Alice"?,"?10"?,"?A"?/);
+  expect(csv.text).not.toContain('  Alice  ');
+  const python = await downloadText(page, 'Download Python');
+  expect(python.text.length).toBeGreaterThan(30);
+  await page.getByRole('link', { name: /Quality & anomalies/ }).click();
+  const beforeRange = await datasetGet(page);
+  await page.getByLabel('Range check column').selectOption('amount');
+  await page.getByLabel('Expected maximum').fill('15');
+  await page.getByRole('button', { name: 'Check numeric range' }).click();
+  await idle(page);
+  await expect(page.locator('#error')).toBeHidden();
+  await expect(page.getByText('Domain range · amount', { exact: true })).toBeVisible();
+  const afterRange = await datasetGet(page);
+  expect(afterRange.active_version).toBe(beforeRange.active_version);
+  expect(afterRange.revision).toBe(beforeRange.revision);
+  await page.getByRole('group', { name: 'Numeric columns' }).getByLabel('amount', { exact: true }).check();
+  await page.getByRole('button', { name: 'Run anomaly detection' }).click();
+  await idle(page);
+  await expect(page.getByRole('heading', { name: 'Anomaly results' })).toBeVisible();
+});
+
+test('empty, unsupported and malformed uploads show actionable errors', async ({ page }) => {
+  await ready(page);
+  const file = page.getByLabel('Choose CSV or Excel file');
+  await file.setInputFiles({ name: 'empty.csv', mimeType: 'text/csv', buffer: Buffer.alloc(0) });
+  await expect(page.getByRole('alert')).toContainText('empty');
+  await file.setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('not a supported dataset') });
+  await expect(page.getByRole('alert')).toContainText('Unsupported file type');
+  await file.setInputFiles({ name: 'broken.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from('This is not a ZIP workbook.') });
+  await idle(page);
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ingest dataset', exact: true })).toHaveCount(0);
+});
+
+test('untrusted headers and values remain text in tables, charts, and mobile themes', async ({ page }) => {
+  const dialogs = [];
+  page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+  await ready(page);
+  const header = '<img src=x onerror=alert(91)>';
+  const payload = '<svg onload=alert(92)>';
+  const quote = value => `"${value.replaceAll('"', '""')}"`;
+  await page.getByLabel('Choose CSV or Excel file').setInputFiles({ name: 'untrusted.csv', mimeType: 'text/csv', buffer: Buffer.from(`${quote(header)},amount\n${quote(payload)},12\nnormal,20\nnormal,30\n`) });
+  await idle(page);
+  await expect(page.getByRole('region', { name: 'Raw file preview including possible header row' })).toContainText(payload);
+  await page.getByLabel('Header row', { exact: true }).selectOption('0');
+  await ingest(page);
+  await page.getByLabel('Profiled column').selectOption(header);
+  await expect(page.getByRole('region', { name: 'Dataset preview' })).toContainText(payload);
+  expect(await page.locator('#main img, #main svg[onload], #main [onerror]').count()).toBe(0);
+  const charts = page.locator('canvas');
+  for (let i = 0; i < Math.min(await charts.count(), 3); i++) await charts.nth(i).hover();
+  await page.getByRole('button', { name: 'Switch to light theme' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('link', { name: /Quality & anomalies/ }).click();
+  await expect(page.getByRole('heading', { name: 'Find the signal. Question the unusual.' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(dialogs).toEqual([]);
+});
+
+test('XLSX worksheet selection is submitted and an authorized workbook can be exported', async ({ page }) => {
+  await ready(page);
+  await page.getByRole('button', { name: 'Explore sample: Multi Sheet', exact: true }).click();
+  await idle(page);
+  const sheets = await page.locator('#ingest-sheet option').allTextContents();
+  expect(sheets.length).toBeGreaterThan(1);
+  await page.getByLabel('Worksheet', { exact: true }).selectOption(sheets[1]);
+  const ingestRequest = page.waitForRequest(request => request.url().endsWith('/ingest') && request.method() === 'POST');
+  await ingest(page);
+  expect((await ingestRequest).postDataJSON().sheet).toBe(sheets[1]);
+  expect((await datasetGet(page, '/profile')).rows).toBeGreaterThan(0);
+  await page.getByRole('link', { name: /Exports & reports/ }).click();
+  const workbook = await downloadText(page, 'Download XLSX');
+  expect(workbook.name).toMatch(/\.xlsx$/);
+  expect(workbook.bytes.subarray(0, 2).toString()).toBe('PK');
+});
+
+test('offline API reference renders the live schema and filters local endpoints', async ({ page, baseURL }) => {
+  const externalRequests = [];
+  page.on('request', request => { if (new URL(request.url()).origin !== new URL(baseURL).origin) externalRequests.push(request.url()); });
+  await page.goto('/static/api-docs.html');
+  await expect(page.getByRole('heading', { name: 'Local API reference', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'GET /api/v1/health', exact: true })).toBeVisible();
+  await page.getByLabel('Filter endpoints').fill('cleaning/apply');
+  await expect(page.getByRole('heading', { name: 'POST /api/v1/datasets/{dataset_id}/cleaning/apply', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'GET /api/v1/health', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Download OpenAPI JSON' })).toHaveAttribute('href', '/openapi.json');
+  expect(externalRequests).toEqual([]);
+});

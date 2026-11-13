@@ -13,6 +13,7 @@ All endpoints `/api/v1`. Dataset responses include `dataset_id`, `filename`, `ac
 - GET `/datasets/{id}/profile` -> profile below
 - GET `/datasets/{id}/columns/{column}` -> column profile
 - GET `/datasets/{id}/quality` -> `{issues:[issue]}`
+- POST `/datasets/{id}/quality` `{domain_rules:{column:{min:0,max:100}}}` -> `{issues:[issue]}` including explicit range findings. Finite numeric bounds, either or both, minimum <= maximum; unknown columns rejected. Read-only, does not alter versions or cached default findings.
 - GET `/datasets/{id}/recommendations` -> `{recommendations:[recommendation]}`
 - POST `/datasets/{id}/anomalies` `{method:iqr|mad|isolation_forest,columns:[string],threshold:3.5}` -> `{method,findings:[{column,row_ids,values,count,thresholds,explanation}],warnings:[]}`. IQR default threshold 1.5; MAD 3.5; isolation threshold ignored.
 - POST `/datasets/{id}/cleaning/preview` `{operation:{kind,column:null,params:{}},expected_version:0,expected_revision:0}` -> `{preview_id,version,operation,affected_cells,affected_rows,rows_removed,rows_added,changes:[{row_id,column,before,after}],metrics_before,metrics_after}`

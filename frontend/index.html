@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="DataLens: inspect, understand, and carefully clean your data in a private local workspace.">
+  <title>DataLens · Data workbench</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%230d9488'/%3E%3Cpath d='M11 11h8c15 0 15 18 0 18h-8z' fill='none' stroke='%23fff' stroke-width='4'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/vendor/echarts.min.js" defer></script>
+  <script src="/static/app.js" type="module"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to workspace</a>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Workspace sidebar">
+      <a class="brand" href="#upload" aria-label="DataLens home"><span class="brand-symbol" aria-hidden="true">D<span></span></span><span>DataLens<span class="brand-subtitle">THE DATA WORKBENCH</span></span></a>
+      <div class="workspace-tag"><span class="status-dot"></span> Local workspace <span class="workspace-tag-label">PRIVATE</span></div>
+      <div class="nav-label">WORKSPACE</div>
+      <nav id="navigation" aria-label="Main navigation"></nav>
+      <div class="sidebar-bottom">
+        <div class="privacy-card"><span class="privacy-icon" aria-hidden="true">◇</span><strong>Your data, your decisions.</strong><p>Originals stay untouched. Every transformation is reviewed and versioned.</p></div>
+        <div class="system-status"><span class="status-dot" id="health-dot"></span><span id="health-status">Connecting to local API</span></div>
+        <div class="sidebar-foot"><span>DataLens v1.0</span><span>LOCAL-FIRST</span></div>
+      </div>
+    </aside>
+    <div class="workspace-shell">
+      <header class="topbar">
+        <button type="button" class="icon-button mobile-menu" id="menu-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">☰</button>
+        <div class="breadcrumb"><span>Workspace</span><span aria-hidden="true">/</span><strong id="view-crumb">Upload</strong></div>
+        <div class="topbar-actions"><span id="dataset-chip" class="dataset-chip">No dataset loaded</span><button type="button" id="theme-toggle" class="icon-button" aria-label="Switch to light theme" title="Switch theme">☀</button></div>
+      </header>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div id="error" class="error-banner" role="alert" hidden></div>
+      <main id="main" tabindex="-1" aria-busy="false"></main>
+      <footer class="workspace-footer"><span>Built for clarity. Designed for trust.</span><span id="footer-version">No data leaves your local workspace by default.</span></footer>
+    </div>
+  </div>
+  <dialog id="confirmation" class="confirmation-dialog" aria-labelledby="confirm-title"><form method="dialog"><div class="eyebrow">PLEASE CONFIRM</div><h2 id="confirm-title"></h2><p id="confirm-message"></p><div class="button-row"><button value="cancel" class="button secondary" autofocus>Cancel</button><button value="confirm" class="button danger" id="confirm-action">Continue</button></div></form></dialog>
+  <noscript><p class="error-banner">DataLens needs JavaScript enabled to connect to the local analysis engine.</p></noscript>
+</body>
+</html>

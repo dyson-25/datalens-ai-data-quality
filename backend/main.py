@@ -16,7 +16,7 @@ from starlette.exceptions import HTTPException
 
 from backend.config import ROOT, Settings
 from backend.jobs import Jobs
-from backend.models import (AnomalyRequest, ApplyRequest, DatasetResponse, EmptyRequest,
+from backend.models import (AnomalyRequest, ApplyRequest, DatasetResponse, DomainQualityRequest, EmptyRequest,
                             IngestRequest, JobCreated, JobResponse, PreviewRequest, ProfileResponse,
                             RestoreRequest, UploadResponse, VersionRequest)
 from backend.store import Store, StoreError
@@ -91,7 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await run_in_threadpool(jobs.close)
 
     app = FastAPI(title='DataLens', version='1.0.0', lifespan=lifespan,
-                  docs_url='/docs' if settings.app_env == 'local' else None, redoc_url=None)
+                  docs_url=None, redoc_url=None)
     app.state.store, app.state.jobs, app.state.settings = store, jobs, settings
     app.state.ai = None
     app.add_middleware(BodyLimitMiddleware, limit=settings.limits['max_upload_bytes'])
@@ -221,6 +221,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with store.work():
             return {'issues': store.analysis(dataset_id)[1]}
 
+    @app.post(prefix + '/datasets/{dataset_id}/quality')
+    def domain_quality(dataset_id: str, body: DomainQualityRequest, auth=Auth):
+        from backend.analysis import quality as analyze
+        with store.work():
+            rules = {column: rule.model_dump(exclude_none=True) for column, rule in body.domain_rules.items()}
+            return {'issues': analyze(store.frame(dataset_id), rules)}
+
     @app.get(prefix + '/datasets/{dataset_id}/recommendations')
     def recommendations(dataset_id: str, auth=Auth):
         with store.work():
@@ -321,6 +328,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     frontend = ROOT / 'frontend'
     app.mount('/static', StaticFiles(directory=frontend), name='static')
+
+    @app.get('/docs', include_in_schema=False)
+    def api_docs():
+        if settings.app_env in {'public', 'cloud'}:
+            raise HTTPException(404, 'Not found.')
+        path = frontend / 'api-docs.html'
+        if not path.exists():
+            raise HTTPException(503, 'API documentation assets are not available.')
+        return FileResponse(path)
 
     @app.get('/', include_in_schema=False)
     def home():

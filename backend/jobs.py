@@ -19,6 +19,8 @@ class Jobs:
                 raise StoreError('Dataset already ingested.', 409, 'conflict')
             job_id = str(uuid4())
             with self.store.db.connect() as db:
+                if db.execute('SELECT count(*) FROM jobs WHERE dataset_id=?', (dataset_id,)).fetchone()[0] >= 100:
+                    raise StoreError('Ingestion attempt limit reached. Start a new session.', 429, 'capacity')
                 db.execute('INSERT INTO jobs(id,dataset_id,status,created_at) VALUES(?,?,?,?)',
                            (job_id, dataset_id, 'queued', time.time()))
             self.executor.submit(self._ingest, dataset_id, job_id, options)

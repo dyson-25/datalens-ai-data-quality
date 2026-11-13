@@ -61,6 +61,29 @@ def test_health_and_request_validation(client):
     assert client.get('/api/v1/health').headers['x-content-type-options'] == 'nosniff'
 
 
+def test_offline_api_documentation_and_schema(client):
+    response = client.get('/docs')
+    assert response.status_code == 200
+    assert '/static/api-docs.js' in response.text
+    assert 'cdn.jsdelivr.net' not in response.text
+    schema = client.get('/openapi.json').json()
+    assert 'post' in schema['paths']['/api/v1/datasets/{dataset_id}/quality']
+
+
+def test_explicit_domain_rules_are_validated_and_non_mutating(client):
+    info, headers = upload(client, b'amount\n1\n50\n100\n')
+    base, meta = ingest(client, info, headers)
+    normal = client.get(base + '/quality', headers=headers).json()['issues']
+    checked = client.post(base + '/quality', headers=headers, json={'domain_rules': {'amount': {'min': 0, 'max': 60}}})
+    assert checked.status_code == 200, checked.text
+    assert len(checked.json()['issues']) > len(normal)
+    assert client.get(base, headers=headers).json() == meta
+    assert client.post(base + '/quality', json={'domain_rules': {'amount': {'min': 0}}}).status_code == 404
+    for rules in ({}, {'amount': {}}, {'amount': {'min': 2, 'max': 1}}, {'amount': {'max': 'Infinity'}}, {'unknown': {'min': 0}}):
+        response = client.post(base + '/quality', headers=headers, json={'domain_rules': rules})
+        assert response.status_code == 422, response.text
+
+
 def test_end_to_end_versions_reports_exports(client):
     info, headers = upload(client)
     base, meta = ingest(client, info, headers)
@@ -100,12 +123,16 @@ def test_end_to_end_versions_reports_exports(client):
     for format in ('json', 'html'):
         response = client.get(base + '/report', params={'format': format}, headers=headers)
         assert response.status_code == 200, response.text
+    report = client.get(base + '/report', params={'format': 'json'}, headers=headers).json()
+    assert report['profile'] == client.get(base + '/profile', headers=headers).json()
+    assert report['issues'] == client.get(base + '/quality', headers=headers).json()['issues']
+    assert report['history'] == client.get(base + '/history', headers=headers).json()
     for language in ('python', 'sql'):
         assert client.get(base + '/code', params={'language': language}, headers=headers).status_code == 200
     assert hashlib.sha256(store.original(info['dataset_id'])[0]).hexdigest() == digest
     reset = client.post(base + '/reset', headers=headers, json=version(branch)).json()
     assert reset['active_version'] == 0
-    assert client.post(base + '/ai/explain', headers=headers, json={}).json()['source'] == 'deterministic_fallback'
+    assert client.post(base + '/ai/explain', headers=headers, json={}).json()['source'] == 'deterministic'
 
 
 def test_preview_isolation_and_approval(client):

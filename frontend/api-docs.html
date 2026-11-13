@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>DataLens · Local API reference</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script type="module" src="/static/api-docs.js"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/">DataLens</a><div class="button-row"><a class="button secondary" href="/">Back to workbench</a><a class="button" href="/openapi.json" download="datalens-openapi.json">Download OpenAPI JSON</a></div></header>
+  <main id="api-reference">
+    <div class="page-header"><div><div class="eyebrow">OFFLINE-READY DEVELOPER REFERENCE</div><h1>Local API reference</h1><p>Live schema from this server. No external scripts, fonts, or API consoles.</p></div></div>
+    <div class="info-box">Dataset endpoints require the private capability in the X-Session-Token header. Never place it in a URL. This viewer does not send dataset requests or store tokens.</div>
+    <div class="filter-bar section-gap"><div class="field"><label for="endpoint-search" class="field-label">Filter endpoints</label><input id="endpoint-search" class="control" type="search" placeholder="Search path, method, or description" autocomplete="off"></div><span class="muted" id="endpoint-count" role="status"></span></div>
+    <div id="schema-status" role="status" class="muted">Loading the server schema…</div>
+    <section id="endpoint-list" class="stack" aria-label="API endpoints"></section>
+    <section class="panel section-gap" aria-labelledby="schemas-title"><div class="panel-head"><div><h2 id="schemas-title">Component schemas</h2><p>Expand a model to view its complete JSON definition.</p></div></div><div class="panel-body stack" id="component-list"></div></section>
+  </main>
+</body>
+</html>
