@@ -58,6 +58,8 @@ Most success responses use 200; dataset creation uses 201 and ingestion submissi
 
 `active_version` is null before successful ingestion. Do not assume revision 0 after ingestion; always read returned metadata. Dataset expiry timestamps and creation timestamps are Unix seconds.
 
+All six attachment formats require successful ingestion. Their `Content-Disposition` names use the sanitized source stem and exported active version, for example `quality_issues-v1.csv`. The filename and contents are selected under the same processing lock. Clients should use that response filename, not a cached UI version. Unicode names use RFC 5987 `filename*` with a safe quoted ASCII fallback. PDF remains a browser print operation on the authorized HTML report.
+
 ## Ingestion
 
 ```json
@@ -84,7 +86,7 @@ The preview returns `preview_id`, `version`, `operation`, affected cell/row coun
 {"preview_id":"00000000-0000-0000-0000-000000000000","expected_version":0,"expected_revision":1,"approved":true}
 ```
 
-Use the real returned preview ID. Apply does not accept a new operation. The latest preview replaces the previous preview and expires after ten minutes. Navigation or another mutation invalidates it; refresh and preview again on 409.
+Use the real returned preview ID. Apply requires the JSON boolean `true`; truthy numbers and strings are rejected. It does not accept a new operation. The latest preview replaces the previous preview and expires after ten minutes; it is already stale at the exact expiration instant. Navigation or another mutation invalidates it; refresh and preview again on 409.
 
 Undo/redo/reset body:
 

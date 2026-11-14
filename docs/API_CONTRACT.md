@@ -17,7 +17,7 @@ All endpoints `/api/v1`. Dataset responses include `dataset_id`, `filename`, `ac
 - GET `/datasets/{id}/recommendations` -> `{recommendations:[recommendation]}`
 - POST `/datasets/{id}/anomalies` `{method:iqr|mad|isolation_forest,columns:[string],threshold:3.5}` -> `{method,findings:[{column,row_ids,values,count,thresholds,explanation}],warnings:[]}`. IQR default threshold 1.5; MAD 3.5; isolation threshold ignored.
 - POST `/datasets/{id}/cleaning/preview` `{operation:{kind,column:null,params:{}},expected_version:0,expected_revision:0}` -> `{preview_id,version,operation,affected_cells,affected_rows,rows_removed,rows_added,changes:[{row_id,column,before,after}],metrics_before,metrics_after}`
-- POST `/datasets/{id}/cleaning/apply` `{preview_id,expected_version:0,expected_revision:0,approved:true}` -> metadata. Apply accepts only exact server-held reviewed operation; stale revisions 409.
+- POST `/datasets/{id}/cleaning/apply` `{preview_id,expected_version:0,expected_revision:0,approved:true}` -> metadata. Approval must be a strict JSON boolean. Apply accepts only the exact server-held reviewed operation; stale revisions or previews at/after their expiration return 409.
 - POST `/datasets/{id}/undo`, `/redo`, `/reset` `{expected_version,expected_revision}` -> metadata
 - POST `/datasets/{id}/restore` `{version,expected_version,expected_revision}` -> metadata
 - GET `/datasets/{id}/history` -> `{active_version,revision,versions:[{version,parent,operation,created_at}]}`
@@ -27,6 +27,8 @@ All endpoints `/api/v1`. Dataset responses include `dataset_id`, `filename`, `ac
 - GET `/ai/status` -> `{enabled,available,model,reason}`
 - POST `/datasets/{id}/ai/explain` `{}` -> `{source,explanation,warnings,reason}`. Aggregate-only, no raw samples/column names.
 - DELETE `/datasets/{id}` -> `{deleted:true}`
+
+All six attachments require ingestion and name the sanitized source stem plus the actual exported active version in `Content-Disposition`. Header and bytes are generated under the same processing lock. Prefer RFC 5987 `filename*`, otherwise the quoted ASCII `filename`; a cached frontend version is not authoritative.
 
 ## Engine module interfaces (pure except ingestion input)
 `backend/ingestion.py`: `inspect_file(data:bytes, filename:str, limits:dict)->dict`; `load_file(data:bytes,filename:str,options:dict,limits:dict)->pd.DataFrame`. limits keys `max_upload_bytes,max_rows,max_columns,max_uncompressed_bytes,max_expansion_ratio`. DataFrame index named `__row_id__` stable int IDs, never a data column. All column labels normalized unique strings. Errors raise ValueError. Do not silently coerce source string cells/null tokens. Infer genuinely numeric columns conservatively, preserve leading-zero identifiers. Mixed Excel scalar columns converted explicitly to lossless string representations before Parquet if necessary, documented warnings.

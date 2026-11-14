@@ -1,5 +1,24 @@
 # Development
 
+## Current verification
+
+The 2026-11-14 local regression passed **619 Python tests and 34 Chromium workflows**. See the [full verification report](docs/DATAlENS_FULL_VERIFICATION_REPORT.md), [every-case matrix](docs/DATAlENS_TEST_MATRIX.md) and [current limitations](docs/DATAlENS_KNOWN_LIMITATIONS.md). Historical counts and provider evidence elsewhere describe earlier runs.
+
+With the existing configured environment/dependencies and port 8765 free, reproduce the isolated regression from the repository root:
+
+```bash
+mkdir -p test-results/full-verification
+.venv/bin/python -m pytest -q --junitxml=test-results/full-verification/python.xml
+.venv/bin/python -m ruff check backend tests scripts
+.venv/bin/python -m pip check
+npm run check
+npm run build
+PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/full-verification/browser.json npm run test:browser -- --reporter=list,html,json
+git diff --check
+```
+
+Browser tests own isolated storage and a separate restart-test process. Do not configure them against a real-user server/store. This verification neither calls a live AI provider nor requires a push/deployment.
+
 ## Working safely
 
 Follow [INSTALLATION.md](INSTALLATION.md), reuse an existing Python 3.12 `.venv`, and preserve private `.env` contents. Do not commit generated storage, uploaded files, tokens, provider keys, local reports or private reference PDFs. Use synthetic datasets for tests and examples.

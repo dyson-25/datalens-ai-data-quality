@@ -30,7 +30,7 @@ function announce(message, loading = false) {
 function showError(error, retry) {
   notice.hidden = true;
   retryAction = retry;
-  errorBox.replaceChildren(el('span', {}, error.message || String(error)), retry ? button('Retry', () => retryAction?.(), 'small secondary') : null, button('Dismiss', () => { errorBox.hidden = true; }, 'small ghost'));
+  errorBox.replaceChildren(el('span', {}, error.message || String(error)), ...(retry ? [button('Retry', () => retryAction?.(), 'small secondary')] : []), button('Dismiss', () => { errorBox.hidden = true; }, 'small ghost'));
   errorBox.hidden = false;
 }
 function setBusy(busy) {
@@ -47,6 +47,19 @@ async function run(label, action, { retry = true } = {}) {
   setBusy(true); announce(label, true);
   try { await action(); announce('Workspace is up to date.'); }
   catch (error) {
+    if (getSession() && (error.status === 404 || error.status === 410)) {
+      // A missing report/column route must not discard an otherwise valid session.
+      let unavailable = error.code === 'expired';
+      if (!unavailable) {
+        try { await datasetApi(); }
+        catch (sessionError) { unavailable = sessionError.code === 'not_found' || sessionError.code === 'expired'; }
+      }
+      if (unavailable) {
+        setSession(null); clearDatasetState(); state.inspection = null;
+        render(); retry = false;
+        error.message = 'This dataset session expired, was removed, or its access token is invalid. Upload the original file again (or reload the sample), then reapply reviewed changes before exporting. The cached workspace is no longer available on the server.';
+      }
+    }
     if (error.status === 409 && state.meta) {
       state.cleaningPreview = null;
       try { await refreshDataset(); render(); } catch { /* Preserve the actionable conflict error. */ }
@@ -475,14 +488,14 @@ function exportsView() {
       el('p', { class: 'muted' }, state.ai ? `${state.ai.enabled ? 'AI enabled' : 'AI disabled'} · ${state.ai.available ? 'Provider available' : 'Provider unavailable'}${state.ai.model ? ` · ${state.ai.model}` : ''}${state.ai.reason ? ` · ${state.ai.reason}` : ''}` : 'AI status could not be loaded; core analysis remains available.'),
       button('Explain aggregate quality', () => run('Preparing an aggregate-only explanation…', async () => { state.explanation = await datasetApi('/ai/explain', { method: 'POST', body: {} }); render(); }), 'secondary'),
       state.explanation ? el('div', {}, badge(state.explanation.source || 'Explanation'), el('p', { class: 'muted', style: 'white-space:pre-wrap;margin-top:12px' }, typeof state.explanation.explanation === 'string' ? state.explanation.explanation : JSON.stringify(state.explanation.explanation, null, 2)), state.explanation.reason ? el('p', { class: 'muted section-gap' }, state.explanation.reason) : null, (state.explanation.warnings || []).map(w => el('p', { class: 'warning-box section-gap' }, valueText(w)))) : null), null, 'section-gap'),
-    panel('Workspace lifecycle', 'The private capability is stored only for this browser tab. Local server retention rules still apply.', el('div', { class: 'panel-body button-row' }, button('Delete this dataset', deleteDataset, 'danger')), null, 'section-gap')];
+    panel('Workspace lifecycle', `The private capability is stored only for this browser tab. This session expires at ${new Date(state.meta.expires_at * 1000).toLocaleString()}; download your work before then. Server cleanup removes the original and all snapshots after expiry.`,  el('div', { class: 'panel-body button-row' }, button('Delete this dataset', deleteDataset, 'danger')), null, 'section-gap')];
 }
 function download(path, extension) {
   run('Preparing your authorized download…', async () => {
-    const blob = await datasetApi(path, { blob: true });
+    const { blob, filename } = await datasetApi(path, { attachment: true });
     const url = URL.createObjectURL(blob);
-    const basename = state.meta.filename.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_');
-    const anchor = el('a', { href: url, download: `${basename}-v${state.meta.active_version}.${extension}`, hidden: true });
+    const downloadName = (filename || `dataset.${extension}`).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_');
+    const anchor = el('a', { href: url, download: downloadName, hidden: true });
     document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
   });
 }
@@ -521,16 +534,11 @@ async function initialize() {
     await loadSamples();
     try { state.ai = await api('/ai/status'); } catch { state.ai = null; }
     if (getSession()) {
-      try {
-        state.meta = await datasetApi();
-        if (state.job) await pollJob();
-        else if (state.meta.active_version !== null && state.meta.active_version >= 0) {
-          if (state.meta.revision !== getSession().revision) state.redoCount = 0;
-          await refreshDataset();
-        }
-      } catch (error) {
-        if ([401, 403, 404, 410].includes(error.status)) { setSession(null); clearDatasetState(); state.inspection = null; }
-        render(); throw error;
+      state.meta = await datasetApi();
+      if (state.job) await pollJob();
+      else if (state.meta.active_version !== null && state.meta.active_version >= 0) {
+        if (state.meta.revision !== getSession().revision) state.redoCount = 0;
+        await refreshDataset();
       }
     }
     render();

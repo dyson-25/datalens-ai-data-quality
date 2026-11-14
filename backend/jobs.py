@@ -23,7 +23,13 @@ class Jobs:
                     raise StoreError('Ingestion attempt limit reached. Start a new session.', 429, 'capacity')
                 db.execute('INSERT INTO jobs(id,dataset_id,status,created_at) VALUES(?,?,?,?)',
                            (job_id, dataset_id, 'queued', time.time()))
-            self.executor.submit(self._ingest, dataset_id, job_id, options)
+            try:
+                self.executor.submit(self._ingest, dataset_id, job_id, options)
+            except Exception:
+                with self.store.db.connect() as db:
+                    db.execute("UPDATE jobs SET status='failed',error=?,completed_at=? WHERE id=?",
+                               ('Processing could not start. Retry ingestion.', time.time(), job_id))
+                raise
             return job_id
         except Exception:
             self.store.gate.release()

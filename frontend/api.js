@@ -15,9 +15,9 @@ export function setSession(value) {
   else sessionStorage.removeItem(SESSION_KEY);
 }
 export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-export async function api(path, { method = 'GET', body, blob = false, signal } = {}) {
+export async function api(path, { method = 'GET', body, blob = false, attachment = false, signal } = {}) {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const headers = { Accept: blob ? '*/*' : 'application/json' };
+    const headers = { Accept: blob || attachment ? '*/*' : 'application/json' };
     if (session?.token) headers['X-Session-Token'] = session.token;
     if (body !== undefined && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
     let response;
@@ -38,6 +38,13 @@ export async function api(path, { method = 'GET', body, blob = false, signal } =
       let payload;
       try { payload = await response.json(); } catch { /* Non-JSON errors still receive a useful status message. */ }
       throw new ApiError(payload?.error?.message || (typeof payload?.detail === 'string' ? payload.detail : `Request failed (${response.status}). Please review your inputs and try again.`), response.status, payload?.error?.code);
+    }
+    if (attachment) {
+      const disposition = response.headers.get('Content-Disposition') || '';
+      let filename = disposition.match(/filename="([^"]+)"/i)?.[1];
+      const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+      if (encoded) { try { filename = decodeURIComponent(encoded); } catch { /* Fall back to the plain filename. */ } }
+      return { blob: await response.blob(), filename };
     }
     if (blob) return response.blob();
     if (response.status === 204) return null;

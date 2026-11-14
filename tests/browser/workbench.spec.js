@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.js';
 import { mkdir } from 'node:fs/promises';
 
 async function capture(page, name) {
@@ -129,6 +129,125 @@ test('sample → profile → approved cleaning → undo/redo/restore → authori
   }
   expect(errors).toEqual([]);
 });
+
+test('active region trim exports contain the cleaned snapshot and printable report', async ({ page }, testInfo) => {
+  await ready(page);
+  await page.getByRole('button', { name: 'Explore sample: Quality Issues', exact: true }).click();
+  await idle(page);
+  await ingest(page);
+  const baseline = await datasetGet(page, '/profile');
+  expect([baseline.rows, baseline.columns]).toEqual([21, 10]);
+  await page.getByRole('link', { name: /Cleaning studio/ }).click();
+  await page.getByLabel('Operation', { exact: true }).selectOption('trim');
+  await page.getByLabel('Target column').selectOption('region');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await expect(page.getByRole('button', { name: 'Approve & apply' })).toBeDisabled();
+  await approve(page);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await idle(page);
+  expect((await datasetGet(page)).active_version).toBe(0);
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await idle(page);
+  expect((await datasetGet(page)).active_version).toBe(1);
+  await page.getByRole('link', { name: /Exports & reports/ }).click();
+  await expect(page.getByText(/This session expires at/)).toBeVisible();
+  for (const [label, extension] of [['CSV', 'csv'], ['XLSX', 'xlsx'], ['JSON', 'json'], ['HTML', 'html'], ['Python', 'py'], ['SQL', 'sql']]) {
+    const file = await downloadText(page, `Download ${label}`);
+    expect(file.name).toBe(`quality_issues-v1.${extension}`);
+    if (extension === 'csv') {
+      expect(file.text).toContain('"00004","California"');
+      expect(file.text).not.toContain(' California ');
+      expect(file.text.trim().split('\n')).toHaveLength(22);
+    } else if (extension === 'xlsx') {
+      const actual = await page.evaluate(async () => {
+        const {datasetApi} = await import('/static/api.js');
+        return Array.from(new Uint8Array(await (await datasetApi('/export?format=xlsx', {blob:true})).arrayBuffer()));
+      });
+      expect(file.bytes.equals(Buffer.from(actual))).toBe(true);
+      expect(file.bytes.subarray(0, 2).toString()).toBe('PK');
+    } else if (extension === 'json') {
+      const report = JSON.parse(file.text);
+      expect(report.profile).toEqual(await datasetGet(page, '/profile'));
+      expect(report.history.active_version).toBe(1);
+      expect(report.history.versions[1].operation.column).toBe('region');
+    } else if (extension === 'html') {
+      expect(file.text).toContain('<!doctype html>');
+      expect(file.text).toContain('&quot;active_version&quot;: 1');
+      expect(file.text).toContain('region');
+    } else if (extension === 'py') {
+      expect(file.text).toContain('"column": "region"');
+      expect(file.text).toContain('def replay(baseline):');
+    } else {
+      expect(file.text).toContain('SET "region" = btrim("region"');
+      expect(file.text).toContain('ROLLBACK;');
+    }
+  }
+  await page.addInitScript(() => { window.print = () => { window.__printRequested = true; }; });
+  await page.getByRole('button', { name: 'Print report / Save as PDF' }).click();
+  await idle(page);
+  await expect.poll(() => page.evaluate(() => document.querySelector('iframe[title="Printable quality report"]')?.contentWindow?.__printRequested === true)).toBe(true);
+  const reportFrame = page.frameLocator('iframe[title="Printable quality report"]');
+  await expect(reportFrame.locator('body')).toContainText('"active_version": 1');
+  await expect(reportFrame.locator('body')).toContainText('region');
+  const printable = await page.locator('iframe[title="Printable quality report"]').getAttribute('srcdoc');
+  const pdfPage = await page.context().newPage();
+  await pdfPage.setContent(printable);
+  const pdf = await pdfPage.pdf({path:testInfo.outputPath('active-v1-report.pdf'), printBackground:true});
+  expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+  expect(pdf.length).toBeGreaterThan(1000);
+  await pdfPage.close();
+  await expect(page.locator('#error')).toBeHidden();
+});
+
+for (const state of ['removed', 'removed-reload', 'expired', 'invalid-token', 'missing-route']) {
+  test(`export handles ${state} without presenting stale dataset state`, async ({ page }) => {
+    await ready(page);
+    await page.getByRole('button', { name: 'Explore sample: Quality Issues', exact: true }).click();
+    await idle(page);
+    await ingest(page);
+    await page.getByRole('link', { name: /Exports & reports/ }).click();
+    if (state.startsWith('removed')) {
+      await page.evaluate(async () => {
+        const {datasetApi} = await import('/static/api.js');
+        await datasetApi('', {method:'DELETE'});
+      });
+    } else if (state === 'invalid-token') {
+      await page.evaluate(async () => {
+        const {getSession, setSession} = await import('/static/api.js');
+        setSession({...getSession(), token:'invalid'});
+      });
+    } else {
+      await page.route(state === 'expired' ? '**/api/v1/datasets/**' : '**/api/v1/datasets/*/report?format=json', route => route.fulfill({
+        status: state === 'expired' ? 410 : 404, contentType:'application/json',
+        body:JSON.stringify({error:{code:state === 'expired' ? 'expired' : 'not_found', message:'Unavailable'}})
+      }));
+    }
+    if (state === 'removed-reload') await page.reload();
+    else await page.getByRole('button', { name: 'Download JSON', exact: true }).click();
+    await idle(page);
+    if (state === 'missing-route') {
+      expect(await page.evaluate(() => !!sessionStorage.getItem('datalens.session'))).toBe(true);
+      await expect(page.getByRole('button', { name:'Download JSON', exact:true })).toBeVisible();
+    } else {
+      await expect(page.locator('#error')).toContainText('Upload the original file again');
+      await expect(page.locator('#error')).not.toContainText('null');
+      await expect(page.locator('#dataset-chip')).toHaveText('No dataset loaded');
+      await expect(page.getByRole('button', { name:'Download JSON', exact:true })).toHaveCount(0);
+      expect(await page.evaluate(() => sessionStorage.getItem('datalens.session'))).toBeNull();
+      await expect(page.locator('#error').getByRole('button', {name:'Retry', exact:true})).toHaveCount(0);
+      if (state === 'removed') {
+        await page.getByRole('button', {name:'Go to upload', exact:true}).click();
+        await page.getByRole('button', {name:'Explore sample: Quality Issues', exact:true}).click();
+        await idle(page);
+        await ingest(page);
+        await page.getByRole('link', {name:/Exports & reports/}).click();
+        const recovered = await downloadText(page, 'Download JSON');
+        expect(JSON.parse(recovered.text).profile.rows).toBe(21);
+      }
+    }
+  });
+}
 
 test('CSV upload preserves raw values, trim changes only the reviewed column, preview invalidates on edit', async ({ page }) => {
   await ready(page);

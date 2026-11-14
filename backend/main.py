@@ -2,9 +2,12 @@ import asyncio
 import logging
 import math
 import time
+import unicodedata
 from collections import OrderedDict, deque
 from contextlib import asynccontextmanager, suppress
+from pathlib import PurePosixPath
 from typing import Annotated
+from urllib.parse import quote
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, Query, Request, UploadFile
@@ -273,36 +276,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def history(dataset_id: str, auth=Auth):
         return store.history(dataset_id)
 
-    def attachment(result: tuple, name: str) -> Response:
+    def download_metadata(dataset_id: str) -> dict:
+        meta = store.metadata(dataset_id)
+        if meta['active_version'] is None:
+            raise StoreError('Ingest the dataset first.', 409, 'not_ingested')
+        return meta
+
+    def attachment(result: tuple, meta: dict) -> Response:
         content, media, extension = result
-        return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="datalens-{name}.{extension.lstrip(chr(46))}"'})
+        source = PurePosixPath(meta['filename'].replace('\\', '/')).stem
+        stem = ''.join('_' if char in '<>:"/\\|?*' or unicodedata.category(char).startswith('C')
+                       else char for char in source)
+        stem = stem.encode('utf-8')[:200].decode('utf-8', 'ignore').strip(' .') or 'dataset'
+        name = f'{stem}-v{meta["active_version"]}.{extension.lstrip(".")}'
+        fallback = name.encode('ascii', 'replace').decode().replace('?', '_')
+        disposition = f'attachment; filename="{fallback}"'
+        if name != fallback:
+            disposition += "; filename*=UTF-8''" + quote(name, safe='')
+        return Response(content, media_type=media, headers={'Content-Disposition': disposition})
 
     @app.get(prefix + '/datasets/{dataset_id}/export')
     def export(dataset_id: str, format: str = Query('csv', pattern='^(csv|xlsx)$'), auth=Auth):
         from backend.exports import export_data
         with store.work():
-            return attachment(export_data(store.frame(dataset_id), format), 'cleaned')
+            meta = download_metadata(dataset_id)
+            return attachment(export_data(store.frame(dataset_id, meta['active_version']), format), meta)
 
     @app.get(prefix + '/datasets/{dataset_id}/report')
     def report(dataset_id: str, format: str = Query('json', pattern='^(json|html)$'), auth=Auth):
         from backend.exports import report_data
         with store.work():
+            meta = download_metadata(dataset_id)
             summary, issues, _ = store.analysis(dataset_id)
-            return attachment(report_data(summary, issues, store.history(dataset_id), format), 'report')
+            return attachment(report_data(summary, issues, store.history(dataset_id), format), meta)
 
     @app.get(prefix + '/datasets/{dataset_id}/code')
     def code(dataset_id: str, language: str = Query('python', pattern='^(python|sql)$'), auth=Auth):
         from backend.exports import generate_code
-        history = store.history(dataset_id)
-        by_version = {v['version']: v for v in history['versions']}
-        active, operations = history['active_version'], []
-        while active is not None:
-            version = by_version[active]
-            if version['parent'] is not None:
-                operations.append(version['operation'])
-            active = version['parent']
-        text = generate_code(list(reversed(operations)), language)
-        return attachment((text.encode(), 'text/plain', 'py' if language == 'python' else 'sql'), 'reference')
+        with store.work():
+            meta = download_metadata(dataset_id)
+            history = store.history(dataset_id)
+            by_version = {v['version']: v for v in history['versions']}
+            active, operations = meta['active_version'], []
+            while active is not None:
+                version = by_version[active]
+                if version['parent'] is not None:
+                    operations.append(version['operation'])
+                active = version['parent']
+            text = generate_code(list(reversed(operations)), language)
+            return attachment((text.encode(), 'text/plain', 'py' if language == 'python' else 'sql'), meta)
 
     def gateway():
         if app.state.ai is None:

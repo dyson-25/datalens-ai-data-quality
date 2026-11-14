@@ -1,18 +1,21 @@
 # Known limitations
 
-The deterministic backend and optional AI integration are implemented and tested. See [validation evidence](VALIDATION.md) for the current release gates.
+For the current 2026-11-14 audit, see [current verification limitations](DATAlENS_KNOWN_LIMITATIONS.md), the [full report](DATAlENS_FULL_VERIFICATION_REPORT.md) and [test matrix](DATAlENS_TEST_MATRIX.md). All 653 automated cases passed; four external/instrumentation scenarios are blocked and seven are untested. Optional AI transport was mocked in this audit; no live provider request occurred.
+
+The sections below retain earlier release limitations and historical external-gate evidence; they are not new provider/container/deployment checks.
 
 ## External release gates
 
 - Docker build was attempted but Docker is not installed and no daemon/socket or alternative container engine is available. **Image build remains unverified.**
 - No Render account/deployment authorization is available. Configuration is prepared; **no public deployment is claimed**.
-- Free-provider availability is external and cannot be guaranteed. One synthetic OpenRouter request succeeded; core processing remains functional without AI.
+- Free-provider availability is external and cannot be guaranteed. An earlier release recorded one successful synthetic OpenRouter request; the 2026-11-14 audit made no live request. Core processing remains functional without AI.
 
 ## Deliberate boundaries
 
 - Single server process/worker only. A global processing gate bounds expensive work; busy requests return 429. This is not a multi-tenant high-concurrency service.
 - Ingestion runs in a bounded background job; timeout cancellation is cooperative, not process isolation. A stuck native parser can hold the slot until it returns. Other expensive operations are synchronous and bounded by dataset limits, not hard execution deadlines.
 - Jobs do not resume after restart. Completed local snapshots survive process restart until TTL expiration; free-host filesystems are ephemeral and can lose all data on restart/redeploy/spindown.
+- Session retention is a fixed deadline (60 minutes by default), not an inactivity timeout extended by cleaning or exports. The exports workspace displays the deadline. After expiry the cleanup task removes the stored original and snapshots; an expired row returns 410 before cleanup, while an already removed session returns 404. The browser clears its stale workspace only after confirming session unavailability, and instructs the user to re-upload/reload the source and reapply reviewed changes. A cached v1 label is not proof that the server still retains v1.
 - Conservative upload/row/column/memory/storage limits reduce risk but cannot guarantee memory capacity on a shared machine. Large-file streaming, distributed processing and durable cloud datasets are not implemented.
 - Dates require explicit user-approved conversion. Leading-zero identifiers and literal null tokens are preserved. Unquoted CSV blanks are null; quoted empty strings remain strings. XLSX formulas are preserved as untrusted text, not evaluated. Mixed Excel scalar columns may use lossless string representations for safe Parquet storage.
 - Statistical anomalies are review suggestions, not proven errors. IsolationForest is opt-in and bounded. Tiny planted fixtures do not establish real-world detection accuracy.

@@ -153,7 +153,9 @@ def _fill(series: pd.Series, params: dict) -> pd.Series:
         scale = float(np.max(np.abs(values))) or 1.0
         value = float((np.mean(values / scale) if strategy == "mean" else np.median(values / scale)) * scale)
     elif strategy == "mode":
-        counts = series.value_counts(dropna=True, sort=False)
+        # Categorical dictionaries include unused labels and impose category order.
+        observed = series.astype(object) if isinstance(series.dtype, pd.CategoricalDtype) else series
+        counts = observed.value_counts(dropna=True, sort=False)
         if counts.empty:
             raise ValueError("Cannot calculate mode of an empty column")
         # Ties use first occurrence, not an unstable category sort.

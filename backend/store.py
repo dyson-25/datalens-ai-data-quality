@@ -240,7 +240,7 @@ class Store:
         with self.db.connect() as db:
             preview = db.execute('SELECT * FROM previews WHERE id=? AND dataset_id=?', (preview_id, dataset_id)).fetchone()
             maximum = db.execute('SELECT max(version),count(*) FROM versions WHERE dataset_id=?', (dataset_id,)).fetchone()
-        if not preview or preview['expires_at'] < time.time() or preview['version'] != version or preview['revision'] != revision:
+        if not preview or preview['expires_at'] <= time.time() or preview['version'] != version or preview['revision'] != revision:
             raise StoreError('Preview expired or stale. Preview the operation again.', 409, 'stale_preview')
         if maximum[1] >= self.settings.max_versions:
             raise StoreError('Version limit reached. Export and start a new session.', 413, 'capacity')

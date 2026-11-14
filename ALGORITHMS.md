@@ -68,6 +68,8 @@ All operations work on a deep copy; apply publishes a new immutable version only
 
 Unknown parameters must fail explicitly. Row IDs identify source records; preview shows before/after changes and total affected counts. The server stores the reviewed operation and rejects a stale revision or expired preview. Undo/reset/restore change the active pointer rather than modifying prior snapshot contents.
 
+For categorical frequencies and mode filling, only observed non-null values participate. Ties follow first observed occurrence, not the categorical dictionary order. Unused category labels are omitted from frequencies and cannot become an invented fill value for an all-null column. Counting does not change the stored categorical dtype.
+
 ## Exports and reproducibility
 
 CSV exports use Python 3.12 `csv.QUOTE_NOTNULL`: null fields are unquoted blanks, while empty strings are quoted. This preserves the null-versus-empty distinction when reingested by DataLens; other CSV readers may apply different missing-value conventions.

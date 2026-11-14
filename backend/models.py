@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -32,6 +32,13 @@ class PreviewRequest(VersionRequest):
 class ApplyRequest(VersionRequest):
     preview_id: str = Field(min_length=36, max_length=36)
     approved: Literal[True]
+
+    @field_validator('approved', mode='before')
+    @classmethod
+    def explicit_approval(cls, value):
+        if value is not True:
+            raise ValueError('Approval must be the JSON boolean true.')
+        return value
 
 
 class RestoreRequest(VersionRequest):

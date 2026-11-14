@@ -141,7 +141,9 @@ def _date_details(series: pd.Series, name: str) -> tuple[dict | None, list, list
 
 
 def _common(series: pd.Series, limit: int = 10) -> list[dict]:
-    counts = series.value_counts(dropna=True, sort=False)
+    # Report observed values in record order, not unused categorical dictionary entries.
+    observed = series.astype(object) if isinstance(series.dtype, pd.CategoricalDtype) else series
+    counts = observed.value_counts(dropna=True, sort=False)
     indexed = list(enumerate(counts.items()))
     indexed.sort(key=lambda pair: (-pair[1][1], pair[0]))
     return [{"value": json_safe(value), "count": int(count)} for _, (value, count) in indexed[:limit]]

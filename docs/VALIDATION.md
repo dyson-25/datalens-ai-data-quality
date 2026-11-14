@@ -1,6 +1,48 @@
 # Validation evidence
 
-Verified locally on 2026-11-13. Results describe this checkout and synthetic fixtures, not production guarantees.
+Results describe local checkouts and synthetic fixtures, not production guarantees. Earlier dated sections below remain historical evidence.
+
+## Complete verification — 2026-11-14
+
+**619 Python tests and 34 real-backend Chromium workflows passed** (653 automated cases; zero final failures/skips/flaky results). The complete ledger defines 664 cases including four blocked and seven untested external/instrumentation scenarios. JavaScript syntax, production build, Ruff, dependency consistency, diff checks, editor diagnostics and all five original sample hashes passed. Actual six-format downloads and Chromium-rendered PDF contents were inspected.
+
+See the [full report](DATAlENS_FULL_VERIFICATION_REPORT.md), [every-case matrix](DATAlENS_TEST_MATRIX.md) and [current limitations](DATAlENS_KNOWN_LIMITATIONS.md) for reproduced defects, changed files, earlier failed attempts, endpoint coverage and exact rerun commands. This audit made no live AI-provider requests, commits, pushes or deployments. Provider evidence in older sections is historical, not a current availability claim.
+
+## Export/session repair — 2026-11-13 follow-up
+
+### Root cause established before changes
+
+The live browser retained `quality_issues.csv · v1` (21 rows × 10 columns), but the server no longer retained the dataset. Fresh requests using that browser session returned `404/not_found` for metadata/profile/history, CSV and Python exports, and JSON/HTML reports. The live OpenAPI schema contained the report route; frontend requests used the correct paths and `X-Session-Token`, including blob downloads and printing. A read-only check found **zero retained datasets** and the configured **60-minute TTL**.
+
+The server had been running since approximately 12:01 UTC; failures appeared around 13:03 UTC. This is consistent with the fixed retention deadline and periodic cleanup. A retained expired row returns 410; after cleanup removes the row and files, authorization returns 404. There is no retained deletion audit proving which event removed this particular dataset. The confirmed fault was a **missing server session presented as a usable cached workspace**, not an absent report route or an export-specific authentication defect.
+
+### Narrow repair and recovery
+
+Only [frontend/app.js](../frontend/app.js) changed in production: confirmed unavailable sessions now clear stale browser state, display actionable recovery guidance and omit futile Retry controls. A report-only 404 rechecks dataset metadata and preserves a still-valid session. Reload uses the same recovery path. The existing lifecycle panel now displays the expiration deadline and deletion warning; layout/styles are unchanged. Suppressing Retry also avoids rendering a literal `null` placeholder.
+
+The actual browser on port 8000 was refreshed and confirmed the missing-session recovery UI rather than the stale v1 workspace. No server restart, database migration, retention-policy change or backend export rewrite was needed. An already removed server original/snapshot cannot be recovered by repairing the frontend: **re-upload the original or reload the sample, repeat the reviewed trim/approval, and export before the displayed deadline**.
+
+### Final regression evidence
+
+```bash
+npm run build && npm run check && npm run test:browser && \
+  .venv/bin/python -m pytest -q && \
+  .venv/bin/python -m ruff check backend tests scripts && git diff --check
+```
+
+**402 Python tests passed (12.11 s); 12 Chromium tests passed (44.3 s); production build, JavaScript syntax checks, Ruff and diff checks passed.** Existing tests were retained. The original release results below are historical, not the latest counts.
+
+- **CSV and Excel XLSX:** actual downloaded bytes; every decoded cell/header compared against the active snapshot, including 21 × 10 dimensions, leading-zero IDs, trimmed regions, and CSV missing-versus-empty quoting. XLSX checked for unintended formula cells.
+- **JSON quality summary and standalone HTML report:** parsed profile, findings and history match the active API results. HTML sections decode to the same report content.
+- **Python transformation reference and PostgreSQL SQL reference:** downloaded files contain the active region trim, replay/reference scaffolding and SQL rollback safeguard; undo excludes the trim, redo restores it. These remain reference artifacts, not a new executable SQL integration.
+- **Browser PDF printing:** the real print action creates the authorized report frame and requests printing. Chromium generated a real PDF from that printable document. `pdftotext` verified the title, 21-row profile, active version 1 and region-trim history. Native OS print-dialog interaction is not automated; the user still selects **Save as PDF**.
+- **Authorization:** all six HTTP download routes reject missing, wrong and other-session tokens, invalid/nonexistent IDs, retained expired sessions (410), and cleaned-up sessions (404).
+- **Lifecycle regression:** removed, expired and invalid-token sessions recover without stale state; startup/reload recovery works; an isolated missing-report route does not clear a valid session; reloading a sample after removal produces a valid JSON download.
+- **Existing behavior:** the actual synthetic fixture exercises preview (four affected region rows), rejection without approval, approved v1 creation, undo to v0 and redo to v1. All six HTTP outputs are checked at each state. Original-upload and v0 snapshot bytes remain unchanged during retained-session exports. Existing ingestion, profiling, missing/duplicate findings, affected-row and cleaning/version tests also pass.
+
+The pre-fix stale-session browser regression failed as expected. A new CSV test initially assumed Python 3.12's reader restored unquoted nulls; its expectation was corrected and raw quoting assertions retained. An ad-hoc PDF assertion initially used incorrect title capitalization; matching the actual title passed. **No test failures remain.** Non-blocking warnings remain for outdated Browserslist data and Starlette's TestClient/HTTPX deprecation.
+
+The four unrelated semantic/presentation improvements are recorded separately in [engineering observations](ENGINEERING_OBSERVATIONS.md), not implemented. No secrets, working ingestion/cleaning behavior, backend architecture or database were changed. **No commit, push or deployment was performed for this repair.**
 
 ## Backend integration, storage and optional AI
 
