@@ -70,6 +70,16 @@ def test_rich_category_profile():
     assert len(categorical["whitespace_variants"]) == 1
 
 
+def test_mixed_supported_dates_distinguish_valid_invalid_ambiguous_missing():
+    df = frame({"order_date": ["2026-09-04", "09/09/2026", "16/08/2026", "2026/10/02", "31/10/2026", "31-10-2026", "2026-13-04", "not-a-date", "04/09/2026", None, "29/02/2025"]})
+    dates = profile(df)["column_profiles"][0]["dates"]
+    assert (dates["valid_count"], dates["invalid_count"], dates["ambiguous_count"], dates["missing_count"]) == (6, 3, 1, 1)
+    issues = {item["category"]: item for item in quality(df)}
+    assert issues["invalid_dates"]["row_ids"] == [22, 24, 30]
+    assert issues["ambiguous_dates"]["row_ids"] == [26]
+    assert issues["mixed_date_formats"]["severity"] == "info"
+
+
 def test_dates_conservative_ambiguity_and_invalid_values():
     df = frame({"date": ["2024-01-31", "31/01/2024", "01/02/2024", "2024-02-30", None],
                 "identifier": ["001", "002", "003", "004", "005"]})
@@ -95,7 +105,7 @@ def test_dates_conservative_ambiguity_and_invalid_values():
     ("invalid_dates", {"date": ["2024-01-01", "bad"]}, None, [12]),
     ("mixed_date_formats", {"date": ["2024-01-01", "31/01/2024"]}, None, [10, 12]),
     ("casing", {"x": ["London", "london"]}, None, [10, 12]),
-    ("spelling_variations", {"x": ["California", "Californa"]}, None, [10, 12]),
+    ("spelling_variations", {"x": ["California", "Californa", "California", "California"]}, None, [10, 12, 14, 16]),
     ("constant_columns", {"x": ["fixed", "fixed"]}, None, [10, 12]),
     ("sentinel_values", {"x": ["null", "real"]}, None, [10]),
     ("invalid_email", {"email": ["a@example.test", "not-an-address"]}, None, [12]),
@@ -110,7 +120,7 @@ def test_all_seventeen_quality_rules(category, data, rules, ids):
     assert matches
     assert matches[0]["row_ids"] == ids
     assert matches[0]["count"] == len(ids)
-    assert set(matches[0]) == {"id", "category", "column", "row_ids", "count", "severity", "method", "explanation", "confidence", "suggestion", "human_review"}
+    assert set(matches[0]) - {"mappings"} == {"id", "category", "column", "row_ids", "count", "severity", "method", "explanation", "confidence", "suggestion", "human_review"}
     assert 0 <= matches[0]["confidence"] <= 1
     assert_frame_equal(df, before)
     assert quality(df, rules) == quality(df, rules)
@@ -121,6 +131,36 @@ def test_negative_values_require_explicit_domain_rules():
     assert not any(issue["category"] == "negative_values" for issue in quality(df))
     result = quality(df, {"amount": {"min": 0}})
     assert any(issue["category"] == "negative_values" and issue["count"] == 1 for issue in result)
+
+
+def test_numeric_readiness_separates_invalid_missing_and_numeric_values():
+    df = frame({"quantity": ["1", "2", "5", "two", "many", "-3", "0", None]})
+    column = profile(df)["column_profiles"][0]
+    readiness = column["numeric_conversion"]
+    assert readiness["parseable_count"] == 5
+    assert readiness["parseable_percentage"] == pytest.approx(500 / 7)
+    assert readiness["invalid_count"] == 2 and readiness["missing_count"] == 1
+    assert readiness["invalid_examples"] == [{"row_id": 16, "value": "two"}, {"row_id": 18, "value": "many"}]
+    assert column["numeric"] is None
+
+
+def test_discount_domain_rules_are_independent_of_statistical_fences():
+    df = frame({"discount_pct": [-10, 0, 25, 50, 100, 125]})
+    issues = quality(df, {"discount_pct": {"min": 0, "max": 100}})
+    violations = [item for item in issues if item["method"] == "explicit domain rule"]
+    assert {idx for item in violations for idx in item["row_ids"]} == {10, 20}
+    assert all(item["severity"] == "error" for item in violations)
+
+
+@pytest.mark.parametrize("name,values,rule,expected", [
+    ("quantity", [-3, 0, 1, 2.5, 5], {"min": 1, "integer": True}, {10, 12, 16}),
+    ("unit_price_inr", [-199, 0, 2324.56, 3310.08, 10], {"min": 0, "exclusive_min": True}, {10, 12}),
+    ("delivery_days", [-4, 0, 4, 7.5, 180], {"min": 0, "integer": True}, {10, 16}),
+    ("customer_rating", [0, 1, 2, 5, 6], {"min": 1, "max": 5}, {10, 18}),
+])
+def test_explicit_retail_domain_constraints(name, values, rule, expected):
+    issues = quality(frame({name: values}), {name: rule})
+    assert {idx for issue in issues if issue["method"] == "explicit domain rule" for idx in issue["row_ids"]} == expected
 
 
 def test_bounded_quality_samples_keep_exact_total_counts():
@@ -135,10 +175,32 @@ def test_fuzzy_sampling_is_bounded_and_deterministic():
     df = frame({"category": [f"California-{i:04}" for i in range(1000)]})
     first = quality(df)
     assert first == quality(df)
-    issue = next(item for item in first if item["category"] == "spelling_variations")
-    assert issue["count"] <= 40
-    assert "bounded" in issue["explanation"]
-    assert issue["human_review"] is True
+    assert not any(item["category"] == "spelling_variations" for item in first)
+
+
+@pytest.mark.parametrize("name,values", [
+    ("order_id", ["NS-00001", "NS-00002"]),
+    ("label", ["NS-00001", "NS-00002"]),
+    ("customer_email", ["alice@example.test", "alica@example.test"]),
+    ("label", ["alice@example.test", "alica@example.test"]),
+    ("phone", ["+919876543210", "+919876543211"]),
+    ("customer_name", ["Caroline", "Carolyn"]),
+    ("order_status", ["Completed", "Complete"]),
+])
+def test_fuzzy_excludes_structured_and_unsubstantiated_labels(name, values):
+    assert not any(item["category"] == "spelling_variations" for item in quality(frame({name: values})))
+
+
+def test_fuzzy_mapping_contains_explicit_review_evidence():
+    df = frame({"region": ["California"] * 9 + ["Californa"]})
+    issue = next(item for item in quality(df) if item["category"] == "spelling_variations")
+    mapping = issue["mappings"][0]
+    assert mapping["mapping"] == {"Californa": "California"}
+    assert mapping["affected_records"] == 1
+    assert 0.85 <= mapping["similarity"] < 1
+    assert mapping["requires_approval"] is True
+    assert issue["severity"] == "info"
+    assert not any(item["operation"]["kind"] == "map_categories" for item in recommendations(df))
 
 
 def test_recommendations_never_mutate_and_require_approval():

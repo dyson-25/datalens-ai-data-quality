@@ -356,6 +356,114 @@ test('XLSX worksheet selection is submitted and an authorized workbook can be ex
   expect(workbook.bytes.subarray(0, 2).toString()).toBe('PK');
 });
 
+test('retail refinement: approved conversions, ambiguity, whitespace, domain and no-op', async ({ page }) => {
+  await ready(page);
+  const rows = Array.from({ length: 10 }, (_, index) => [
+    `NS-${String(index + 1).padStart(5, '0')}`, `person${index}@example.test`,
+    index === 9 ? 'Californa' : 'California', index === 0 ? '  Chennai ' : 'Chennai',
+    ['1', '2', '5', 'two', 'many', '-3', '0', '', '4', '7'][index],
+    ['2026-09-04', '09/09/2026', '16/08/2026', '2026/10/02', '31/10/2026', '31-10-2026', '04/09/2026', '', '2026-01-01', '2026-02-01'][index],
+    [-10, 125, 0, 10, 20, 25, 30, 50, 75, 100][index]
+  ].join(','));
+  await page.getByLabel('Choose CSV or Excel file').setInputFiles({ name: 'retail.csv', mimeType: 'text/csv', buffer: Buffer.from(`order_id,customer_email,region,city,quantity,order_date,discount_pct\n${rows.join('\n')}\n`) });
+  await idle(page);
+  await page.getByLabel('Header row', { exact: true }).selectOption('0');
+  await ingest(page);
+  await navigate(page, 'quality');
+  await expect(page.getByRole('heading', { name: 'Spelling variations · order_id' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Spelling variations · customer_email' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Review-only category mapping' })).toContainText('Californa');
+  await page.getByRole('button', { name: 'Review mapping', exact: true }).click();
+  await expect(page.locator('#param-mapping')).toHaveValue(/Californa/);
+  expect((await datasetGet(page)).active_version).toBe(0);
+  await page.getByLabel('Operation', { exact: true }).selectOption('to_numeric');
+  await page.getByLabel('Target column').selectOption('quantity');
+  await expect(page.locator('#numeric-readiness')).toContainText('7 of 9');
+  await expect(page.locator('#numeric-readiness')).toContainText('2 invalid values; 1 missing cells');
+  await page.getByRole('button', { name: 'Review selected tokens as null' }).click();
+  await expect(page.locator('#error')).toContainText('Select exact invalid tokens first');
+  await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await expect(page.locator('#error')).toContainText('Numeric conversion would lose invalid values');
+  expect((await datasetGet(page)).active_version).toBe(0);
+  await page.getByRole('group', { name: 'Invalid tokens to replace with null' }).getByLabel('"many"', { exact: true }).check();
+  await page.getByRole('button', { name: 'Review selected tokens as null' }).click();
+  await expect(page.locator('#param-tokens')).toHaveValue('["many"]');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await expect(page.getByRole('region', { name: 'Cleaning change preview' })).toContainText('many');
+  await page.getByRole('button', { name: 'Discard preview' }).click();
+  expect((await datasetGet(page)).active_version).toBe(0);
+  await page.getByLabel('Operation', { exact: true }).selectOption('to_numeric');
+  await page.getByRole('button', { name: 'Correct values with a mapping' }).click();
+  await page.locator('#param-mapping').fill('{"two":"2","many":null}');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await approve(page);
+  await page.getByLabel('Operation', { exact: true }).selectOption('to_numeric');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await approve(page);
+  const numeric = (await datasetGet(page, '/profile')).column_profiles.find(column => column.name === 'quantity');
+  expect(numeric.numeric.finite_count).toBe(8);
+  expect(numeric.numeric.min).toBe(-3);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await idle(page);
+  expect((await datasetGet(page)).active_version).toBe(1);
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await idle(page);
+  expect((await datasetGet(page)).active_version).toBe(2);
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await expect(page.getByText('No values or column types changed. No version will be created.')).toBeVisible();
+  await expect(page.locator('#approval')).toBeDisabled();
+  await page.getByLabel('Operation', { exact: true }).selectOption('to_date');
+  await page.getByLabel('Target column').selectOption('order_date');
+  await page.getByLabel('Date parsing mode').selectOption('supported');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await expect(page.locator('#error')).toContainText('Ambiguous dates require');
+  await page.getByLabel('Ambiguous day/month order').selectOption('day_first');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await approve(page);
+  expect((await datasetGet(page)).active_version).toBe(3);
+  await page.getByLabel('Operation', { exact: true }).selectOption('trim');
+  await page.getByLabel('Target column').selectOption('city');
+  await page.getByRole('button', { name: 'Preview changes' }).click();
+  await idle(page);
+  await expect(page.getByRole('region', { name: 'Cleaning change preview' })).toContainText('\u2420\u2420Chennai\u2420');
+  await navigate(page, 'quality');
+  await page.getByLabel('Range check column').selectOption('discount_pct');
+  await page.getByLabel('Expected minimum').fill('0');
+  await page.getByLabel('Expected maximum').fill('100');
+  await page.getByRole('button', { name: 'Check numeric range' }).click();
+  await idle(page);
+  await expect(page.getByText(/^Values violate the explicit domain minimum 0(?:\.0)?\.$/)).toBeVisible();
+  await expect(page.getByText(/^Values violate the explicit domain maximum 100(?:\.0)?\.$/)).toBeVisible();
+});
+
+test('refinement themes: every section at desktop and mobile sizes', async ({ page }, testInfo) => {
+  await ready(page);
+  await page.getByRole('button', { name: 'Explore sample: Quality Issues', exact: true }).click();
+  await idle(page);
+  await ingest(page);
+  for (const theme of ['light', 'dark']) {
+    await page.locator('#theme-toggle').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const section of ['upload', 'overview', 'quality', 'cleaning', 'exports']) {
+        await navigate(page, section);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        await page.screenshot({ path: testInfo.outputPath(`${theme}-${width}-${section}.png`), animations: 'disabled' });
+      }
+    }
+  }
+});
+
 test('offline API reference renders the live schema and filters local endpoints', async ({ page, baseURL }) => {
   const externalRequests = [];
   page.on('request', request => { if (new URL(request.url()).origin !== new URL(baseURL).origin) externalRequests.push(request.url()); });

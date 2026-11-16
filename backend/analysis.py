@@ -23,10 +23,10 @@ from .ingestion import numeric_candidate
 _ROW_LIMIT = 200
 _SENTINELS = {"na", "n/a", "null", "none", "nil", "nan", "unknown", "missing", "?", "-", "-999", "-9999", "9999"}
 _DATE_NAME = re.compile(r"date|timestamp|birthday|dob|_at$", re.I)
-_NUMERIC_NAME = re.compile(r"(?:^|_)(?:amount|price|salary|age|quantity|count|cost|score|weight|height|total)(?:$|_)", re.I)
+_NUMERIC_NAME = re.compile(r"(?:^|_)(?:amount|price|salary|age|quantity|count|cost|score|weight|height|total|days|rating|pct)(?:$|_)", re.I)
 _ID_NAME = re.compile(r"(?:^|[\s_])(?:id|identifier|zip|postcode|postal|phone|code)(?:$|[\s_])", re.I)
 _ISO = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?\Z")
-_SLASH = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})\Z")
+_SLASH = re.compile(r"(\d{1,2})([/-])(\d{1,2})\2(\d{4})\Z")
 
 
 def json_safe(value):
@@ -110,12 +110,16 @@ def _date_value(value: object) -> tuple[pd.Timestamp | None, str | None, bool]:
         if _ISO.fullmatch(value):
             style = "ISO-8601"
             return pd.Timestamp(datetime.fromisoformat(value.replace("Z", "+00:00"))), style, False
+        if re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2}", value):
+            style = "%Y/%m/%d"
+            return pd.Timestamp(datetime.strptime(value, style)), style, False
         match = _SLASH.fullmatch(value)
         if match:
-            a, b, _ = map(int, match.groups())
-            if 1 <= a <= 12 and 1 <= b <= 12 and a != b:
-                return None, "ambiguous slash date", True
-            style = "%d/%m/%Y" if a > 12 else "%m/%d/%Y"
+            first, separator, second, year = match.groups()
+            day, month = int(first), int(second)
+            if 1 <= day <= 12 and 1 <= month <= 12 and day != month:
+                return None, "ambiguous day/month date", True
+            style = f"%d{separator}%m{separator}%Y" if day > 12 or day == month else f"%m{separator}%d{separator}%Y"
             return pd.Timestamp(datetime.strptime(value, style)), style, False
     except (ValueError, OverflowError):
         return None, style or "date-like", False
@@ -124,8 +128,8 @@ def _date_value(value: object) -> tuple[pd.Timestamp | None, str | None, bool]:
 
 def _date_details(series: pd.Series, name: str) -> tuple[dict | None, list, list, list]:
     parsed = [_date_value(value) for value in series]
-    styles = Counter(style for _, style, _ in parsed if style)
-    if not styles and not _DATE_NAME.search(name) and not is_datetime64_any_dtype(series.dtype):
+    styles = Counter(style for value, style, _ in parsed if value is not None and style)
+    if not any(style for _, style, _ in parsed) and not _DATE_NAME.search(name) and not is_datetime64_any_dtype(series.dtype):
         return None, [], [], []
     valid = [(idx, value) for idx, (value, _, _) in zip(series.index, parsed) if value is not None]
     invalid = [idx for idx, original, (value, _, ambiguous) in zip(series.index, series, parsed)
@@ -135,7 +139,7 @@ def _date_details(series: pd.Series, name: str) -> tuple[dict | None, list, list
     normalized = [value.tz_localize("UTC") if value.tzinfo is None else value.tz_convert("UTC") for _, value in valid]
     low, high = (min(normalized), max(normalized)) if normalized else (None, None)
     return {"min": json_safe(low), "max": json_safe(high), "valid_count": len(valid),
-            "invalid_count": len(invalid), "ambiguous_count": len(ambiguous),
+            "invalid_count": len(invalid), "ambiguous_count": len(ambiguous), "missing_count": int(series.isna().sum()),
             "range_days": (high.to_pydatetime() - low.to_pydatetime()).total_seconds() / 86400 if low is not None else None,
             "formats": dict(styles), "possible_format_inconsistencies": len(styles) > 1}, valid, invalid, ambiguous
 
@@ -193,6 +197,19 @@ def profile(df: pd.DataFrame) -> dict:
             semantic = "numeric_string"
         else:
             semantic = "categorical" if distinct <= max(20, rows * 0.2) else "text"
+        conversion = None
+        if not is_numeric_dtype(series.dtype) and not is_datetime64_any_dtype(series.dtype):
+            present_values = series.dropna()
+            parsed = present_values.map(lambda value: numeric_candidate(value.strip(), preserve_identifiers=False) if isinstance(value, str) else None)
+            parseable = int(parsed.notna().sum())
+            invalid_values = present_values[parsed.isna()]
+            if parseable or _NUMERIC_NAME.search(str(name)):
+                conversion = {"parseable_count": parseable, "present_count": present,
+                              "parseable_percentage": 100 * parseable / present if present else 0,
+                              "missing_count": rows - present, "invalid_count": len(invalid_values),
+                              "invalid_examples": [{"row_id": int(idx), "value": json_safe(value)} for idx, value in invalid_values.head(_ROW_LIMIT).items()],
+                              "invalid_examples_truncated": len(invalid_values) > _ROW_LIMIT,
+                              "requires_approval": True}
         distribution[semantic] += 1
         if not present:
             empty.append(name)
@@ -204,7 +221,7 @@ def profile(df: pd.DataFrame) -> dict:
                          "distinct_count": distinct, "distinct_percentage": 100 * distinct / present if present else 0.0,
                          "samples": [json_safe(value) for value in series.dropna().head(5)], "common_values": _common(series),
                          "numeric": numeric, "categorical": _categorical_profile(series) if semantic in {"categorical", "text", "numeric_string", "boolean"} else None,
-                         "dates": dates})
+                         "dates": dates, "numeric_conversion": conversion})
     correlation_columns = numeric_columns[:50]
     normalized = {}
     for name in correlation_columns:
@@ -281,23 +298,35 @@ def quality(df: pd.DataFrame, domain_rules: dict | None = None) -> list[dict]:
         if dates:
             if invalid:
                 issues.append(_issue("invalid_dates", name, invalid, "Date-like column contains invalid or unrecognized date values; no ambiguous date order was guessed.", "Select an explicit date format and review failures.", 0.85, method="strict date parsing"))
-            if len(dates["formats"]) > 1 or ambiguous:
-                ids = [idx for idx, value in series.items() if not pd.isna(value)]
-                issues.append(_issue("mixed_date_formats", name, ids, "Multiple date formats or ambiguous day/month order require review.", "Confirm date order and convert with an explicit format.", 0.8, method="date shape heuristic"))
+            if ambiguous:
+                issues.append(_issue("ambiguous_dates", name, ambiguous, "Both day/month interpretations are valid; no order was guessed.", "Select day-first or month-first before conversion.", severity="info", method="calendar validation"))
+            if len(dates["formats"]) > 1:
+                ids = [idx for idx, value in series.items() if _date_value(value)[0] is not None]
+                issues.append(_issue("mixed_date_formats", name, ids, "Valid dates use alternative supported formats; these are not invalid dates.", "Optionally preview conversion to a consistent representation.", severity="info", method="calendar validation"))
         text_values = sorted(set(value for value in series if isinstance(value, str)))
         groups = {}
         for value in text_values:
             groups.setdefault(value.casefold(), []).append(value)
         variants = {value for group in groups.values() if len(group) > 1 for value in group}
         add("casing", name, text.isin(variants) & text_mask, "Categories differ only in letter case.", "Select a casing convention only if case is not meaningful.", confidence=0.95)
-        fuzzy_values = [value for value in text_values if 3 <= len(value) <= 100][:100]
+        counts = Counter(value for value in series if isinstance(value, str))
+        excluded_name = _ID_NAME.search(str(name)) or re.search(r"name|email|e.mail|phone|mobile|address|date|timestamp", str(name), re.I)
+        structured = any(re.search(r"[\d@]", value) or _date_value(value)[1] for value in text_values)
+        categorical = len(text_values) <= 100 and len(text_values) <= max(2, int(series.notna().sum() * 0.2))
+        fuzzy_values = [value for value in text_values if 3 <= len(value) <= 100] if categorical and not excluded_name and not structured else []
         pairs = []
+        mappings = []
         for left, right in combinations(fuzzy_values, 2):
             if left.strip().casefold() == right.strip().casefold():
                 continue
             similarity = ratio(left.casefold(), right.casefold())
-            if 85 <= similarity < 100:
+            original, canonical = sorted((left, right), key=lambda value: (counts[value], value))
+            if 85 <= similarity < 100 and counts[canonical] >= 3 * counts[original]:
                 pairs.append((left, right))
+                mappings.append({"original": original, "canonical": canonical, "affected_records": counts[original],
+                                 "similarity": similarity / 100, "confidence": 0.6,
+                                 "mapping": {original: canonical}, "requires_approval": True,
+                                 "explanation": "Similar label occurs at least three times as often; frequency is evidence for review, not proof of a typo."})
                 if len(pairs) == 20:
                     break
         if pairs:
@@ -305,6 +334,7 @@ def quality(df: pd.DataFrame, domain_rules: dict | None = None) -> list[dict]:
             add("spelling_variations", name, text.isin(selected) & text_mask,
                 f"Potential spelling variants (bounded lexical sample, not confirmed errors): {pairs!r}.",
                 "Approve an explicit category mapping; never merge solely on similarity.", confidence=0.6, severity="info", method="bounded fuzzy similarity >=85%")
+            issues[-1]["mappings"] = mappings
         if series.nunique(dropna=True) == 1:
             add("constant_columns", name, series.notna(), "Every non-null value is identical.", "Keep unless the column has no business meaning.", severity="info")
         sentinel = series.map(lambda value: str(value).strip().casefold() in _SENTINELS if not pd.isna(value) else False)
@@ -318,8 +348,13 @@ def quality(df: pd.DataFrame, domain_rules: dict | None = None) -> list[dict]:
                 return bool(re.fullmatch(r"\+?[0-9 ()\-.]+", value)) and 7 <= len(re.sub(r"\D", "", value)) <= 15
             add("invalid_phone", name, series.notna() & ~series.map(phone_ok), "Phone-like value fails a broad 7–15 digit shape check; local formats and extensions can be legitimate.", "Review with country-specific domain knowledge.", confidence=0.6, method="phone shape heuristic")
         column_rule = rules.get(name, {}) if name != "non_negative" else {}
-        if not isinstance(column_rule, dict) or set(column_rule) - {"min", "max", "non_negative"}:
-            raise ValueError("Column domain rules support only min, max and non_negative")
+        if not isinstance(column_rule, dict) or set(column_rule) - {"min", "max", "non_negative", "integer", "exclusive_min"}:
+            raise ValueError("Column domain rules support only min, max, non_negative, integer and exclusive_min")
+        for flag in ("integer", "exclusive_min"):
+            if flag in column_rule and not isinstance(column_rule[flag], bool):
+                raise ValueError(f"{flag} must be a boolean")
+        if column_rule.get("exclusive_min") and column_rule.get("min") is None:
+            raise ValueError("An exclusive minimum requires min")
         if "non_negative" in column_rule and not isinstance(column_rule["non_negative"], bool):
             raise ValueError("non_negative must be a boolean")
         lower, upper = column_rule.get("min"), column_rule.get("max")
@@ -332,11 +367,17 @@ def quality(df: pd.DataFrame, domain_rules: dict | None = None) -> list[dict]:
             lower = lower if lower is not None else 0
             values = _number_values(series)
             if len(values):
-                add("negative_values", name, np.isfinite(values) & (values < lower), f"Values violate the explicit domain minimum {lower}.", "Review the confirmed domain-rule violation; do not infer replacement values.", severity="error", method="explicit domain rule")
+                below = values <= lower if column_rule.get("exclusive_min") else values < lower
+                qualifier = "exclusive " if column_rule.get("exclusive_min") else ""
+                add("negative_values", name, np.isfinite(values) & below, f"Values violate the explicit {qualifier}domain minimum {lower}.", "Review the confirmed domain-rule violation; do not infer replacement values.", severity="error", method="explicit domain rule")
         if upper is not None:
             values = _number_values(series)
             if len(values):
                 add("domain_range", name, np.isfinite(values) & (values > upper), f"Values violate the explicit domain maximum {upper}.", "Review the confirmed domain-rule violation; do not infer replacement values.", severity="error", method="explicit domain rule")
+        if column_rule.get("integer"):
+            values = _number_values(series)
+            if len(values):
+                add("domain_integer", name, np.isfinite(values) & (values != np.trunc(values)), "Values violate the explicit whole-number requirement.", "Review fractional values against the source; do not round automatically.", severity="error", method="explicit domain rule")
         def shape(value):
             if not isinstance(value, str):
                 return type(value).__name__

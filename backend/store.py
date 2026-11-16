@@ -213,15 +213,19 @@ class Store:
 
     def analysis(self, dataset_id: str) -> tuple[dict, list, list]:
         from backend.analysis import profile, quality, recommendations
+        cache_revision = 2
         version = self.metadata(dataset_id)['active_version']
         with self.db.connect() as db:
             row = db.execute('SELECT * FROM profiles WHERE dataset_id=? AND version=?', (dataset_id, version)).fetchone()
         if row:
-            return tuple(json.loads(row[key]) for key in ('profile', 'quality', 'recommendations'))
+            cached_profile = json.loads(row['profile'])
+            if cached_profile.pop('_analysis_revision', None) == cache_revision:
+                return cached_profile, json.loads(row['quality']), json.loads(row['recommendations'])
         frame = self.frame(dataset_id)
         result = profile(frame), quality(frame), recommendations(frame)
+        cached = {**result[0], '_analysis_revision': cache_revision}, result[1], result[2]
         with self.db.connect() as db:
-            db.execute('INSERT OR REPLACE INTO profiles VALUES(?,?,?,?,?)', (dataset_id, version, *(encode(part) for part in result)))
+            db.execute('INSERT OR REPLACE INTO profiles VALUES(?,?,?,?,?)', (dataset_id, version, *(encode(part) for part in cached)))
         return result
 
     def preview(self, dataset_id: str, operation: dict, version: int, revision: int) -> dict:
@@ -242,10 +246,13 @@ class Store:
             maximum = db.execute('SELECT max(version),count(*) FROM versions WHERE dataset_id=?', (dataset_id,)).fetchone()
         if not preview or preview['expires_at'] <= time.time() or preview['version'] != version or preview['revision'] != revision:
             raise StoreError('Preview expired or stale. Preview the operation again.', 409, 'stale_preview')
+        operation = json.loads(preview['operation'])
+        current = self.frame(dataset_id)
+        transformed = apply_operation(current, operation)
+        if current.equals(transformed):
+            raise StoreError('No values or column types changed. No version was created.', 409, 'no_changes')
         if maximum[1] >= self.settings.max_versions:
             raise StoreError('Version limit reached. Export and start a new session.', 413, 'capacity')
-        operation = json.loads(preview['operation'])
-        transformed = apply_operation(self.frame(dataset_id), operation)
         new_version = maximum[0] + 1
         path = self.write_snapshot(dataset_id, new_version, transformed)
         try:

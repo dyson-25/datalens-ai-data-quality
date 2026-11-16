@@ -88,9 +88,15 @@ def test_explicit_domain_rules_are_validated_and_non_mutating(client):
     checked = client.post(base + '/quality', headers=headers, json={'domain_rules': {'amount': {'min': 0, 'max': 60}}})
     assert checked.status_code == 200, checked.text
     assert len(checked.json()['issues']) > len(normal)
+    exclusive = client.post(base + '/quality', headers=headers, json={'domain_rules': {'amount': {'min': 1, 'exclusive_min': True}}})
+    assert exclusive.status_code == 200, exclusive.text
+    assert next(issue for issue in exclusive.json()['issues'] if issue['method'] == 'explicit domain rule')['row_ids'] == [0]
+    whole = client.post(base + '/quality', headers=headers, json={'domain_rules': {'amount': {'integer': True}}})
+    assert whole.status_code == 200, whole.text
+    assert not any(issue['category'] == 'domain_integer' for issue in whole.json()['issues'])
     assert client.get(base, headers=headers).json() == meta
     assert client.post(base + '/quality', json={'domain_rules': {'amount': {'min': 0}}}).status_code == 404
-    for rules in ({}, {'amount': {}}, {'amount': {'min': 2, 'max': 1}}, {'amount': {'max': 'Infinity'}}, {'unknown': {'min': 0}}):
+    for rules in ({}, {'amount': {}}, {'amount': {'min': 2, 'max': 1}}, {'amount': {'max': 'Infinity'}}, {'unknown': {'min': 0}}, {'amount': {'exclusive_min': True}}, {'amount': {'integer': 'yes'}}):
         response = client.post(base + '/quality', headers=headers, json={'domain_rules': rules})
         assert response.status_code == 422, response.text
 

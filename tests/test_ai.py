@@ -509,6 +509,7 @@ def test_only_aggregate_counts_and_allowlisted_semantic_types_leave_process(db_p
             'name': sentinel, 'storage_type': sentinel, 'semantic_type': sentinel,
             'samples': [sentinel], 'common_values': [{'value': sentinel, 'count': 99999}],
             'numeric': {'mean': 987654321, 'min': 123456789, 'histogram': {'edges': [sentinel]}},
+            'numeric_conversion': {'invalid_examples': [{'row_id': 987654321, 'value': sentinel}]},
         }],
         'correlation': {'columns': [sentinel], 'matrix': [[987654321]]},
         'memory_bytes': sentinel,

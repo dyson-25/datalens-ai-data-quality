@@ -39,6 +39,62 @@ def test_no_row_identity_loss(store):
     assert not store.snapshot_path(info['dataset_id'], 0).exists()
 
 
+def test_legacy_analysis_cache_refreshes_without_mutating_dataset(store, monkeypatch):
+    info, frame = dataset(store)
+    dataset_id = info['dataset_id']
+    meta = store.baseline(dataset_id, frame, time.monotonic() + 10)
+    original = store.snapshot_path(dataset_id, 0).read_bytes()
+    with store.db.connect() as db:
+        db.execute('INSERT INTO profiles VALUES(?,?,?,?,?)', (dataset_id, 0, '{"rows":999}', '[]', '[]'))
+    refreshed = store.analysis(dataset_id)
+    assert refreshed[0]['rows'] == 1
+    assert '_analysis_revision' not in refreshed[0]
+    monkeypatch.setattr('backend.analysis.profile', lambda frame: pytest.fail('Current cache should be reused'))
+    assert store.analysis(dataset_id) == refreshed
+    assert store.metadata(dataset_id) == meta
+    assert store.snapshot_path(dataset_id, 0).read_bytes() == original
+
+
+def test_noop_preview_never_creates_a_version(store):
+    info, frame = dataset(store)
+    meta = store.baseline(info['dataset_id'], frame, time.monotonic() + 10)
+    preview = store.preview(info['dataset_id'], {'kind': 'to_numeric', 'column': 'a'}, 0, meta['revision'])
+    assert preview['no_changes'] is True
+    with pytest.raises(StoreError, match='No values or column types changed'):
+        store.apply(info['dataset_id'], preview['preview_id'], 0, meta['revision'])
+    assert store.metadata(info['dataset_id']) == meta
+    assert len(store.history(info['dataset_id'])['versions']) == 1
+
+
+@pytest.mark.parametrize('kind,values,params', [
+    ('to_numeric', ['1', 'two', '-3', '0', None], {'coerce': True}),
+    ('to_date', ['2026-09-04', '16/08/2026', '2026/10/02', '31-10-2026', None], {'format': 'supported'}),
+])
+def test_conversion_history_cancel_undo_redo_restore(store, kind, values, params):
+    info = store.create(b'a\nsynthetic\n', 'synthetic.csv', {'format': 'csv'})
+    frame = pd.DataFrame({'a': pd.Series(values, dtype='string')})
+    frame.index = pd.Index([10, 20, 30, 40, 50], name='__row_id__')
+    dataset_id = info['dataset_id']
+    meta = store.baseline(dataset_id, frame, time.monotonic() + 10)
+    original = store.snapshot_path(dataset_id, 0).read_bytes()
+    operation = {'kind': kind, 'column': 'a', 'params': params}
+    abandoned = store.preview(dataset_id, operation, 0, meta['revision'])
+    pd.testing.assert_frame_equal(store.frame(dataset_id), frame)
+    preview = store.preview(dataset_id, operation, 0, meta['revision'])
+    with pytest.raises(StoreError, match='expired or stale'):
+        store.apply(dataset_id, abandoned['preview_id'], 0, meta['revision'])
+    changed = store.apply(dataset_id, preview['preview_id'], 0, meta['revision'])
+    converted = store.frame(dataset_id)
+    assert converted.index.equals(frame.index)
+    undone = store.navigate(dataset_id, 'undo', 1, changed['revision'])
+    pd.testing.assert_frame_equal(store.frame(dataset_id), frame)
+    redone = store.navigate(dataset_id, 'redo', 0, undone['revision'])
+    pd.testing.assert_frame_equal(store.frame(dataset_id), converted)
+    store.navigate(dataset_id, 'reset', 1, redone['revision'])
+    pd.testing.assert_frame_equal(store.frame(dataset_id), frame)
+    assert store.snapshot_path(dataset_id, 0).read_bytes() == original
+
+
 def test_authorization_and_storage_paths(store):
     info, _ = dataset(store)
     assert store.authorize(info['dataset_id'], info['token'])['id'] == info['dataset_id']

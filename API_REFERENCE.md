@@ -14,7 +14,7 @@ Base path: `/api/v1`. [docs/API_CONTRACT.md](docs/API_CONTRACT.md) defines engin
 | --- | --- |
 | 400 / 422 | Invalid operation, input or request schema |
 | 404 | Unknown resource or missing/invalid dataset capability |
-| 409 | Stale revision/preview, missing ingestion, or invalid history navigation |
+| 409 | Stale revision/preview, missing ingestion, invalid history navigation, or `no_changes` |
 | 410 | Dataset expired |
 | 413 | Request, dataset, version or storage capacity exceeded |
 | 429 | Processing slot busy, session capacity or request-rate limit |
@@ -39,7 +39,7 @@ Most success responses use 200; dataset creation uses 201 and ingestion submissi
 | GET | `/datasets/{id}/profile` | Cached active-version profile |
 | GET | `/datasets/{id}/columns/{column}` | One column profile; URL-encode column path |
 | GET | `/datasets/{id}/quality` | Cached standard `{issues:[...]}` |
-| POST | `/datasets/{id}/quality` | Strict `{domain_rules:{column:{min,max}}}`; read-only domain-rule quality check |
+| POST | `/datasets/{id}/quality` | Strict `{domain_rules:{column:{min,max,integer,exclusive_min}}}`; optional explicit constraints, read-only |
 | GET | `/datasets/{id}/recommendations` | `{recommendations:[...]}` |
 | POST | `/datasets/{id}/anomalies` | Method/columns/optional threshold; findings and warnings |
 | POST | `/datasets/{id}/cleaning/preview` | Operation plus expected version/revision; reviewed diff |
@@ -82,6 +82,8 @@ Illustrative request (replace version/revision with current metadata):
 
 The preview returns `preview_id`, `version`, `operation`, affected cell/row counts, rows removed/added, sampled `changes`, and before/after metrics. A displayed change list is not necessarily every changed cell. Review counts and potential data loss before sending:
 
+It also returns `no_changes` and `schema_changed`. When values and dtypes are unchanged, approval is disabled and direct apply returns `409/no_changes` without publishing a snapshot. A dtype-only change is still eligible for review and approval.
+
 ```json
 {"preview_id":"00000000-0000-0000-0000-000000000000","expected_version":0,"expected_revision":1,"approved":true}
 ```
@@ -104,7 +106,7 @@ After ingestion, inspect the profile and decide which business bounds are justif
 {"domain_rules":{"amount":{"min":0,"max":100},"age":{"min":0}}}
 ```
 
-Send this body to `POST /api/v1/datasets/{id}/quality`. Each column rule requires at least one finite numeric bound; `min` or `max` may be omitted, and `min` must not exceed `max` when both are supplied. The schema is strict: unknown fields, invalid bounds or unknown column names return 422.
+Send this body to `POST /api/v1/datasets/{id}/quality`. Each column rule requires at least one finite numeric bound or `integer:true`; `min` or `max` may be omitted, and `min` must not exceed `max` when both are supplied. Optional `exclusive_min:true` rejects equality with the supplied minimum and requires `min`. Both flags require strict JSON booleans. Example: `{"unit_price_inr":{"min":0,"exclusive_min":true},"quantity":{"min":1,"integer":true}}`. Checks use actual numeric columns; mixed text requires a separately approved conversion. Unknown fields, invalid bounds or unknown column names return 422.
 
 Review the returned issues against the intended business rules. This request is **read-only**: it does not create a version, change the active version/revision, or authorize cleaning. To correct selected records, separately create a cleaning preview with current metadata, review its changes, then explicitly approve it. `GET /quality` remains the cached standard quality path; submitting domain rules is not a permanent dataset configuration.
 
@@ -117,6 +119,10 @@ Review the returned issues against the intended business rules. This request is 
 Methods: `iqr` (default multiplier 1.5), `mad` (default threshold 3.5), `isolation_forest` (threshold ignored). Omit threshold to use a method's default; explicit values must be finite, greater than 0 and at most 20. Select 1–20 columns.
 
 Cleaning kinds: `trim`, `normalize_missing`, `drop_duplicates`, `to_numeric`, `to_date`, `fill_missing`, `drop_column`, `case`, `map_categories`, `handle_infinity`, `outliers`. Parameter semantics and cautions are in [ALGORITHMS.md](ALGORITHMS.md) and the implementation contract. Recommendations are advisory; they do not authorize automatic changes.
+
+For reviewed mixed date formats, use `{"kind":"to_date","column":"order_date","params":{"format":"supported","date_order":"day_first","coerce":false}}`. Omit `date_order` to block ambiguous day/month values; `coerce:true` never bypasses that requirement. Supported conversion emits UTC timestamps. Exact strptime formats remain available.
+
+Column profiles can include `numeric_conversion` with `parseable_count`, `present_count`, `parseable_percentage`, `missing_count`, `invalid_count`, bounded `invalid_examples:[{row_id,value}]`, `invalid_examples_truncated` and `requires_approval:true`. Percentage uses present non-null values as denominator. This is readiness metadata, not an automatic conversion or numeric statistical summary. Category suggestions may include `mappings` containing original/canonical labels, affected counts, similarity, confidence, an exact mapping, explanation and `requires_approval:true`.
 
 ## Minimal client commands
 

@@ -562,14 +562,14 @@ QUALITY_SAMPLE_CASES = [
     ("invalid_numeric", "quantity", [2, 9]),
     ("sentinel_values", "quantity", [9]),
     ("invalid_dates", "order_date", [3]),
-    ("mixed_date_formats", "order_date", list(range(21))),
+    ("mixed_date_formats", "order_date", [idx for idx in range(21) if idx not in (3, 5)]),
+    ("ambiguous_dates", "order_date", [5]),
     ("invalid_email", "email", [6]),
     ("invalid_phone", "phone", [7]),
     ("constant_columns", "constant", list(range(21))),
     ("duplicate_columns", "category_code_copy", list(range(21))),
     ("mixed_formats", "category_code", [12]),
     ("casing", "region", [0, 2, 4, 5, 7, 9, 12, 14, 15, 17, 19, 20]),
-    ("spelling_variations", "region", [i for i in range(21) if i != 10]),
     ("numeric_strings", "quantity", [i for i in range(21) if i not in (2, 9)]),
 ]
 
@@ -588,6 +588,11 @@ def test_sample_quality_exact_record_ids(category, column, ids):
     assert item["human_review"] is True
     assert 0 <= item["confidence"] <= 1
     assert_frame_equal(source, before)
+
+
+def test_sample_weak_spelling_evidence_is_suppressed():
+    source = load_file((SAMPLES / "quality_issues.csv").read_bytes(), "quality.csv", {}, {})
+    assert not any(item["category"] == "spelling_variations" for item in quality(source))
 
 
 def test_domain_maximum_is_explicit_and_findings_not_corrections():

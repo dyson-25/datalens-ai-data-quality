@@ -71,7 +71,7 @@ const cases = [
   { kind: 'outliers', column: 'amount', inputs: { 'param-rows': '3', 'param-action': 'clip', 'param-lower': '0', 'param-upper': '10' }, expected: [1, null, null, 10], changed: 1 }
 ];
 for (const operation of cases) {
-  test(`UI-${operation.kind}: preview → approval → undo → redo → reset → refresh`, async ({ page, browserEvidence }) => {
+  test(`UI-${operation.kind}: ${operation.changed ? 'preview → approval → undo → redo → reset → refresh' : 'no-op preview preserves history'}`, async ({ page, browserEvidence }) => {
     await ready(page); await upload(page, operation.source || csv); await ingest(page);
     const original = await request(page, '/preview?limit=200');
     const baseline = await request(page, '/preview?limit=200');
@@ -83,6 +83,18 @@ for (const operation of cases) {
     await expect(page.locator('.preview-stats > div').nth(1).locator('strong')).toHaveText(String(operation.changed));
     expect(await request(page, '/preview?limit=200')).toEqual(baseline);
     expect((await request(page)).revision).toBe(metadata.revision);
+    if (!operation.changed) {
+      await expect(page.locator('#approval')).toBeDisabled();
+      await expect(page.getByText('No values or column types changed. No version will be created.')).toBeVisible();
+      await page.getByRole('button', { name: 'Discard preview' }).click();
+      expect((await request(page, '/history')).versions).toHaveLength(1);
+      await page.reload(); await idle(page);
+      expect(await request(page, '/preview?limit=200')).toEqual(baseline);
+      expect((await exportCsv(page)).name).toContain('-v0');
+      expect(browserEvidence.failedRequests).toEqual([]);
+      expect(browserEvidence.consoleErrors).toEqual([]);
+      return;
+    }
     await approve(page);
     const cleaned = await request(page, '/preview?limit=200');
     expect((await request(page)).active_version).toBe(metadata.active_version + 1);

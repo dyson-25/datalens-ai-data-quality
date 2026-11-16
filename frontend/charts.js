@@ -79,6 +79,8 @@ export function correlation(profile) {
   const matrix = profile.correlation?.matrix || [];
   const data = [];
   matrix.forEach((row, y) => row.forEach((v, x) => { if (Number.isFinite(v)) data.push([x, y, v]); }));
+  if (columns.length < 2) return el('div', { class: 'chart-empty', role: 'status' }, 'Correlation needs at least two numeric columns. Text or mixed columns require an approved numeric conversion.');
+  if (!data.some(([column, row]) => column !== row)) return el('div', { class: 'chart-empty', role: 'status' }, 'Correlation is undefined: columns need variation and at least two paired finite observations.');
   return chart('Pearson correlation heatmap. Association is not causation; null correlations are omitted.', {
     tooltip: { position: 'top', trigger: 'item', renderMode: 'richText', confine: true, formatter: params => `${columns[params.value[0]]} / ${columns[params.value[1]]}\nCorrelation: ${fmt(params.value[2])}` },
     grid: { left: 25, right: 35, top: 15, bottom: 70, containLabel: true },
@@ -98,6 +100,7 @@ export function issueChart(issues) {
 }
 export function anomalyChart(result) {
   const findings = result?.findings || [];
+  if (!findings.some(finding => finding.count > 0)) return el('div', { class: 'chart-empty', role: 'status' }, 'No statistical anomalies at this method and threshold. Domain-rule violations may still exist.');
   const series = findings.filter(f => f.values?.length).map((f, index) => ({ name: f.column || `Finding ${index + 1}`, type: 'scatter', symbolSize: 9, data: f.row_ids.map((id, i) => [id, f.values[i]]).filter(point => Number.isFinite(point[1])) }));
   return chart('Flagged anomaly values by stable row ID. Only returned flagged records are plotted; column scales may differ.', {
     xAxis: { type: 'value', name: 'Row ID', nameLocation: 'middle', nameGap: 25 }, yAxis: { type: 'value', scale: true }, series,

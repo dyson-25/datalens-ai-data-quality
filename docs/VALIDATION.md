@@ -2,6 +2,47 @@
 
 Results describe local checkouts and synthetic fixtures, not production guarantees. Earlier dated sections below remain historical evidence.
 
+## Final engineering pass
+
+**642 Python tests and 42 real-backend Chromium workflows passed; no final failures or skips.** The pre-change Python baseline was 619 passing tests. Final Python runtime was 39.66 seconds; Chromium completed in 3.0 minutes. These are local measurements, not performance guarantees.
+
+All required gates passed:
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python -m ruff check backend tests scripts
+npm run check
+npm run build
+npm run test:browser
+.venv/bin/python -m pip check
+git diff --check
+```
+
+Editor diagnostics found no errors in the changed source and test files. Non-blocking existing warnings remain: Starlette TestClient/HTTPX deprecation and outdated Browserslist data. No dependency upgrades were made.
+
+### Root causes and repairs
+
+- Fuzzy matching previously compared structured identifiers and similar labels without semantic/cardinality safeguards or frequency evidence. Conservative exclusions and review-only explicit mappings now prevent the covered false positives; uncertain suggestions are deliberately suppressed.
+- Date profiling mixed ambiguous/invalid rows with valid format variation. Valid, ambiguous, invalid and missing counts are now distinct. Supported-format conversion validates calendars, blocks unresolved ambiguity even with coercion, and requires reviewed order selection.
+- The numeric engine was already conservative, but the UI did not explain partially numeric columns. Readiness counts, invalid examples, selected-token null handling and explicit correction mappings now expose the existing approval workflow without weakening ingestion.
+- Explicit business rules were limited to inclusive bounds. Optional whole-number and exclusive-minimum constraints now express positive prices and integer quantities/delivery days separately from statistical anomalies.
+- The UI's high/critical count did not match backend severity values, overlapping findings could be confused with unique rows, and whitespace previews hid changes. Findings/row-occurrence/unique-row totals, classification labels and visible surrounding whitespace now clarify results.
+- Unchanged operations previously published empty versions. No-op previews disable approval; the server rejects no-op publication while allowing dtype-only changes. Legacy analysis caches refresh lazily so existing sessions receive the corrected algorithms.
+
+### Preserved behavior and browser evidence
+
+The full suites retain immutable original/v0, stable row IDs, capability isolation, expiry/cleanup, stale/expired preview rejection, explicit approval, Undo/Redo/reset/restore, process restart, public limits, and CSV/XLSX/JSON/HTML/Python/SQL export coverage. The AI payload test includes the new invalid-example field and confirms it never leaves the aggregate-only privacy boundary. No live AI provider request was made.
+
+New retail browser coverage exercises strict conversion failure, selected invalid tokens, cancellation, explicit mapping, numeric/date conversion, history, unresolved date ambiguity, no-op blocking, whitespace and explicit discount bounds. A theme test visits all five sections at 1440px and 390px in light and dark modes, checks page overflow, toggles the theme by keyboard and saves 20 screenshots in the ignored Playwright artifacts directory. Representative desktop/mobile screenshots were visually inspected. Existing reduced-motion, loading, failure/retry, hostile-content and authorized-download tests also passed. The existing light theme was retained; no theme rewrite was necessary.
+
+Earlier full-run failures were obsolete expectations for mixed-date row IDs, weak fuzzy evidence, and approval of a no-op infinity fixture. They were updated to assert the refined contracts. A new browser assertion initially assumed integer formatting for API float bounds; the assertion now accepts both numeric representations. All were rerun successfully.
+
+### Remaining limits
+
+Spelling detection is a conservative heuristic, not proof of a typo or perfect personal-name recognition. Diagnostic examples/row IDs remain capped at 200, with exact totals and lower-bound labeling where needed. Domain rules are explicit, read-only and numeric-column-only; mixed columns require approved conversion first. Supported dates normalize to UTC and offset values may change calendar date. SQL date/numeric conversion remains deliberately untranslated reference output. This pass verifies Chromium, not every browser or a live deployment; native print dialogs and live AI availability are not certified.
+
+No authentication, secret, Docker/Render, dependency, sample-data or infrastructure changes were made. No commit, push or deployment was performed.
+
 ## Complete verification — 2026-11-14
 
 **619 Python tests and 34 real-backend Chromium workflows passed** (653 automated cases; zero final failures/skips/flaky results). The complete ledger defines 664 cases including four blocked and seven untested external/instrumentation scenarios. JavaScript syntax, production build, Ruff, dependency consistency, diff checks, editor diagnostics and all five original sample hashes passed. Actual six-format downloads and Chromium-rendered PDF contents were inspected.

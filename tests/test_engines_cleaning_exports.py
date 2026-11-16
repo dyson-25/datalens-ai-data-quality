@@ -84,6 +84,19 @@ def test_large_integer_conversion_and_precision_guards():
         apply_operation(frame({"x": pd.Series([2**53 + 1, None], dtype="Int64")}), operation("fill_missing", {"strategy": "mean"}))
 
 
+def test_selected_numeric_corrections_and_nulls_before_strict_conversion():
+    df = frame({"x": pd.Series(["1", "2.5", "two", "many", "-3", "0", None], dtype="string")})
+    before = df.copy(deep=True)
+    mapping = operation("map_categories", {"mapping": {"two": "2", "many": None}})
+    preview = preview_operation(df, mapping)
+    assert preview["changes"] == [{"row_id": 14, "column": "x", "before": "two", "after": "2"}, {"row_id": 16, "column": "x", "before": "many", "after": None}]
+    assert_frame_equal(df, before)
+    corrected = apply_operation(df, mapping)
+    result = apply_operation(corrected, operation("to_numeric"))
+    assert result["x"].dropna().tolist() == [1, 2.5, 2, -3, 0]
+    assert profile(result)["column_profiles"][0]["numeric"]["finite_count"] == 5
+
+
 def test_date_conversion_requires_exact_format_and_preserves_ids():
     df = frame({"x": ["31/01/2024", "bad", None]})
     with pytest.raises(ValueError):
@@ -103,6 +116,32 @@ def test_dates_with_offsets_have_parquet_compatible_single_timezone():
     buffer = io.BytesIO()
     result.to_parquet(buffer)
     assert_frame_equal(result, pd.read_parquet(io.BytesIO(buffer.getvalue())))
+
+
+def test_supported_date_conversion_preview_and_ambiguity_guard():
+    df = frame({"x": ["2026-09-04", "16/08/2026", "2026/10/02", "31-10-2026", "04/09/2026", None]})
+    before = df.copy(deep=True)
+    for coerce in (False, True):
+        with pytest.raises(ValueError, match="Ambiguous"):
+            preview_operation(df, operation("to_date", {"format": "supported", "coerce": coerce}))
+    op = operation("to_date", {"format": "supported", "date_order": "day_first"})
+    preview = preview_operation(df, op)
+    assert preview["affected_cells"] == 5
+    assert preview["changes"][4]["after"] == "2026-09-04T00:00:00+00:00"
+    assert_frame_equal(df, before)
+    result = apply_operation(df, op)
+    assert result.index.equals(df.index)
+    buffer = io.BytesIO()
+    result.to_parquet(buffer)
+    assert_frame_equal(result, pd.read_parquet(io.BytesIO(buffer.getvalue())))
+
+
+def test_supported_date_invalid_policy_is_explicit():
+    df = frame({"x": ["2026-13-04", "not-a-date", "2026/10/02"]})
+    with pytest.raises(ValueError, match="invalid"):
+        apply_operation(df, operation("to_date", {"format": "supported"}))
+    result = apply_operation(df, operation("to_date", {"format": "supported", "coerce": True}))
+    assert result["x"].isna().tolist() == [True, True, False]
 
 
 def test_selected_duplicate_removal_only_and_stable_ids():

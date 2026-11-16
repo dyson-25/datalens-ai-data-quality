@@ -265,10 +265,12 @@ function paginate(delta) { run('Loading data rows…', async () => { const offse
 
 function qualityView() {
   const issues = state.domainResult?.issues || state.issues;
+  const uniqueRows = new Set(issues.flatMap(issue => issue.row_ids || [])).size;
+  const sampled = issues.some(issue => issue.count > (issue.row_ids?.length || 0));
   const filtered = issues.filter(issue => (!state.filters.severity || issue.severity === state.filters.severity) && (!state.filters.category || issue.category === state.filters.category) && (!state.filters.column || issue.column === state.filters.column));
   const filter = (key, label, values) => field(label, select(`filter-${key}`, [['', `All ${label.toLowerCase()}`], ...[...new Set(values.filter(v => v != null))].sort()], state.filters[key], event => { state.filters[key] = event.target.value; render(); }));
   const nodes = [heading('Find the signal. Question the unusual.', 'Explainable quality checks and statistical anomaly detection. Findings are prompts for review, not automatic deletions.', [refreshButton(), button('Open cleaning studio', () => go('cleaning'))], 'QUALITY & ANOMALY LAB'),
-    el('div', { class: 'metrics' }, metric('QUALITY FINDINGS', fmt(issues.length), 'Counts can overlap across categories'), metric('HIGH / CRITICAL', fmt(issues.filter(i => ['high', 'critical'].includes(i.severity)).length), 'Prioritize a closer review'), metric('REVIEW REQUIRED', fmt(issues.filter(i => i.human_review).length), 'Context matters before changing data'), metric('RECOMMENDATIONS', fmt(state.recommendations.length), 'Every change requires your approval')),
+    el('div', { class: 'metrics' }, metric('QUALITY FINDINGS', fmt(issues.length), 'Checks with results, not an error total'), metric('ROW OCCURRENCES', fmt(issues.reduce((total, issue) => total + issue.count, 0)), 'Overlapping findings count the same row again'), metric('UNIQUE AFFECTED ROWS', `${sampled ? 'At least ' : ''}${fmt(uniqueRows)}`, sampled ? 'Lower bound from returned row samples' : 'Distinct records across these findings'), metric('RECOMMENDATIONS', fmt(state.recommendations.length), 'Every change requires your approval')),
     el('div', { class: 'two-col' }, panel('Quality signals', 'Affected record counts can overlap; not a unique-row total.', issueChart(issues)), anomalyControls()),
     domainControls(),
     panel('Findings', 'Filter, understand the method, and explore the affected rows.', el('div', { class: 'panel-body' }, el('div', { class: 'filter-bar' }, filter('severity', 'Severities', issues.map(i => i.severity)), filter('category', 'Categories', issues.map(i => i.category)), filter('column', 'Columns', issues.map(i => i.column))),
@@ -285,6 +287,8 @@ function domainControls() {
     el('div', { class: 'filter-bar' }, field('Range check column', select('domain-column', numeric.length ? numeric : [['', 'No numeric columns']], draft.column, event => { draft.column = event.target.value; })),
       field('Expected minimum', input('domain-min', draft.min, { type: 'number', step: 'any', placeholder: 'Optional', oninput: event => { draft.min = event.target.value; } })),
       field('Expected maximum', input('domain-max', draft.max, { type: 'number', step: 'any', placeholder: 'Optional', oninput: event => { draft.max = event.target.value; } })),
+      el('label', { class: 'check-field' }, el('input', { type: 'checkbox', checked: draft.integer, onchange: event => { draft.integer = event.target.checked; } }), 'Whole numbers only'),
+      el('label', { class: 'check-field' }, el('input', { type: 'checkbox', checked: draft.exclusive_min, onchange: event => { draft.exclusive_min = event.target.checked; } }), 'Exclude the minimum'),
       button('Check numeric range', () => run('Checking your explicit numeric range…', async () => {
         const bounds = {};
         for (const key of ['min', 'max']) if (draft[key] !== '') {
@@ -292,7 +296,9 @@ function domainControls() {
           if (!Number.isFinite(value)) throw new Error('Range bounds must be finite numbers.');
           bounds[key] = value;
         }
-        if (!Object.keys(bounds).length) throw new Error('Enter at least one expected bound.');
+        if (draft.integer) bounds.integer = true;
+        if (draft.exclusive_min) { if (bounds.min === undefined) throw new Error('Enter a minimum before excluding it.'); bounds.exclusive_min = true; }
+        if (!Object.keys(bounds).length) throw new Error('Enter an expected bound or require whole numbers.');
         if (bounds.min !== undefined && bounds.max !== undefined && bounds.min > bounds.max) throw new Error('Expected minimum cannot exceed expected maximum.');
         const result = await datasetApi('/quality', { method: 'POST', body: { domain_rules: { [draft.column]: bounds } } });
         state.domainResult = { ...result, column: draft.column, bounds }; state.filters = { severity: '', category: '', column: '' }; render();
@@ -300,14 +306,24 @@ function domainControls() {
     state.domainResult ? el('div', { class: 'info-box' }, `Findings below include the range check for ${state.domainResult.column}: ${valueText(state.domainResult.bounds)}. Dataset and versions are unchanged. These ad-hoc rules are not included in standard exports.`, button('Clear range results', () => { state.domainResult = null; render(); }, 'ghost small')) : el('p', { class: 'muted' }, 'One column per check. Empty bounds are omitted. Results are cleared when you refresh or change the active version.')), badge('NO DATA CHANGES', 'success'), 'section-gap');
 }
 function issueCard(issue) {
+  const classification = issue.method === 'explicit domain rule' ? 'Domain-rule violation'
+    : issue.category === 'missing_values' ? 'Missing values'
+      : issue.category.startsWith('invalid_') ? 'Invalid values'
+        : ['whitespace', 'casing', 'mixed_date_formats'].includes(issue.category) ? 'Formatting inconsistency'
+          : ['duplicate_rows', 'duplicate_columns', 'empty_strings'].includes(issue.category) ? 'Structural finding'
+            : 'Review-only suggestion';
   return el('article', { class: 'issue-card' }, el('div', { class: 'issue-heading' }, el('h3', {}, `${humanize(issue.category)}${issue.column != null ? ` · ${issue.column}` : ' · Dataset'}`), badge(issue.severity, issue.severity)),
+    badge(classification),
     el('p', {}, issue.explanation), el('div', { class: 'issue-meta' }, badge(issue.method || 'Quality check'), el('span', {}, `${fmt(issue.count)} affected records`), issue.confidence != null ? el('span', {}, `Confidence: ${typeof issue.confidence === 'number' ? pct(issue.confidence * 100) : issue.confidence}`) : null, issue.human_review ? el('span', {}, 'Human review required') : null),
     el('p', {}, typeof issue.suggestion === 'object' ? valueText(issue.suggestion) : issue.suggestion),
+    (issue.mappings || []).map(proposal => el('div', { class: 'stack' },
+      table(['Original', 'Proposed canonical', 'Affected records', 'Similarity', 'Confidence'], [[proposal.original, proposal.canonical, proposal.affected_records, pct(proposal.similarity * 100), pct(proposal.confidence * 100)]], { caption: 'Review-only category mapping' }),
+      el('p', {}, proposal.explanation), button('Review mapping', () => { state.operation = { kind: 'map_categories', column: issue.column, params: { mapping: proposal.mapping } }; state.cleaningPreview = null; go('cleaning'); }, 'secondary small'))),
     el('div', { class: 'issue-actions' }, button('Explore affected rows', () => exploreRows(issue.row_ids || [], `${humanize(issue.category)}${issue.column ? ` · ${issue.column}` : ''}`, issue.count), 'secondary small', { disabled: !issue.row_ids?.length }), el('span', { class: 'muted' }, `${fmt(issue.row_ids?.length || 0)} returned row IDs`)));
 }
 function anomalyControls() {
   const numeric = state.profile.column_profiles.filter(c => c.numeric).map(c => c.name);
-  const columns = el('div', { class: 'field' }, el('span', { class: 'field-label', id: 'anomaly-columns-label' }, 'Numeric columns'), el('div', { role: 'group', 'aria-labelledby': 'anomaly-columns-label', style: 'display:flex;flex-wrap:wrap;gap:10px;max-height:120px;overflow:auto' }, numeric.length ? numeric.map(name => el('label', { class: 'check-field' }, el('input', { type: 'checkbox', checked: state.anomalyColumns.includes(name), onchange: event => { state.anomalyColumns = event.target.checked ? [...state.anomalyColumns, name] : state.anomalyColumns.filter(c => c !== name); } }), name)) : el('p', { class: 'muted' }, 'No numeric columns are available.')));
+  const columns = el('div', { class: 'field' }, el('span', { class: 'field-label', id: 'anomaly-columns-label' }, 'Numeric columns'), el('div', { role: 'group', 'aria-labelledby': 'anomaly-columns-label', style: 'display:flex;flex-wrap:wrap;gap:10px;max-height:120px;overflow:auto' }, numeric.length ? numeric.map(name => el('label', { class: 'check-field' }, el('input', { type: 'checkbox', checked: state.anomalyColumns.includes(name), onchange: event => { state.anomalyColumns = event.target.checked ? [...state.anomalyColumns, name] : state.anomalyColumns.filter(c => c !== name); } }), name)) : el('p', { class: 'muted' }, 'No numeric columns are available. Text and mixed values need an approved numeric conversion in the Cleaning Studio.')));
   return panel('Statistical anomaly detection', 'Unusual does not mean incorrect. Always review in context.', el('div', { class: 'panel-body stack', style: 'gap:15px' }, el('div', { class: 'form-grid' },
     field('Detection method', select('anomaly-method', [['iqr', 'IQR fences'], ['mad', 'Median absolute deviation'], ['isolation_forest', 'Isolation forest']], state.anomalyMethod, event => { state.anomalyMethod = event.target.value; state.anomalyThreshold = state.anomalyMethod === 'iqr' ? '1.5' : '3.5'; render(); })),
     field('Threshold', input('anomaly-threshold', state.anomalyThreshold, { type: 'number', min: '0.01', step: '0.1', disabled: state.anomalyMethod === 'isolation_forest', oninput: event => { state.anomalyThreshold = event.target.value; } }), state.anomalyMethod === 'isolation_forest' ? 'Isolation forest ignores this threshold.' : 'IQR default 1.5; MAD default 3.5.')), columns,
@@ -371,7 +387,7 @@ function operationPanel() {
   const op = state.operation;
   const wholeDataset = op.kind === 'drop_duplicates';
   const kind = select('operation-kind', operations, op.kind, event => { state.operation = { kind: event.target.value, column: state.operation.column || state.column, params: {} }; state.cleaningPreview = null; render(); });
-  const column = select('operation-column', state.profile.column_profiles.map(c => c.name), op.column || state.column, event => { state.operation.column = event.target.value; invalidatePreview(); });
+  const column = select('operation-column', state.profile.column_profiles.map(c => c.name), op.column || state.column, event => { state.operation.column = event.target.value; invalidatePreview(); render(); });
   column.disabled = wholeDataset;
   const node = panel('Custom operation', 'Make the target and every parameter explicit.', el('div', { class: 'panel-body' },
     el('div', { class: 'form-grid' }, field('Operation', kind), field('Target column', column, wholeDataset ? 'Duplicates are compared across the entire row.' : 'Choose the column this operation will change.')),
@@ -388,14 +404,34 @@ function operationParams() {
   const rowIds = () => field('Explicit row IDs', paramInput('row_ids', 'param-rows', Array.isArray(p.row_ids) ? p.row_ids.join(', ') : p.row_ids || '', { placeholder: 'For example: 2, 7, 18' }), 'Stable row IDs only, separated by commas. Find them in the Quality Lab row explorer. No rows are selected automatically.');
   if (kind === 'normalize_missing') return [field('Missing tokens (JSON array)', el('textarea', { id: 'param-tokens', class: 'control', oninput: event => update('tokens', event.target.value) }, typeof p.tokens === 'string' ? p.tokens : JSON.stringify(p.tokens || ['', 'NA', 'N/A', 'null'])), 'Exact string tokens to replace with null, e.g. ["", "NA"]. This is an explicit transformation.')];
   if (kind === 'drop_duplicates') return [rowIds(), el('div', { class: 'warning-box' }, 'Only the duplicate row IDs you explicitly select will be removed. The engine validates each selection.')];
-  if (kind === 'to_numeric') return [coerce(), el('p', { class: 'muted' }, 'Converting identifiers can remove leading zeros. Review the preview before approval.')];
-  if (kind === 'to_date') return [field('Date format', paramInput('format', 'param-format', p.format || '', { placeholder: '%Y-%m-%d' }), 'Explicit strptime format, e.g. %Y-%m-%d or %d/%m/%Y. Ambiguous dates are never guessed.'), coerce()];
+  if (kind === 'to_numeric') return [numericReadiness(), coerce(), el('p', { class: 'muted' }, 'Unchecked: preserve invalid values and block full conversion. Checked: preview every invalid value becoming null. Identifiers may lose leading zeros.')];
+  if (kind === 'to_date') return [
+    field('Date parsing mode', select('date-mode', [['exact', 'Exact format'], ['supported', 'Supported mixed formats']], p.format === 'supported' ? 'supported' : 'exact', event => { update('format', event.target.value === 'supported' ? 'supported' : ''); delete state.operation.params.date_order; render(); })),
+    p.format === 'supported' ? el('div', {}, el('input', { id: 'param-format', type: 'hidden', value: 'supported' }), field('Ambiguous day/month order', paramSelect('date_order', 'param-date-order', [['', 'Block ambiguous values'], ['day_first', 'Day first (DD/MM)'], ['month_first', 'Month first (MM/DD)']], p.date_order || '')), el('p', { class: 'muted' }, 'ISO, YYYY/MM/DD, and slash/hyphen day-month dates. Output uses UTC; naive dates retain their calendar day. Invalid values remain blocked unless coercion is approved.'))
+      : field('Date format', paramInput('format', 'param-format', p.format || '', { placeholder: '%Y-%m-%d' }), 'Explicit strptime format, e.g. %Y-%m-%d or %d/%m/%Y.'), coerce()];
   if (kind === 'fill_missing') return [field('Fill strategy', paramSelect('strategy', 'param-strategy', ['median', 'mean', 'mode', 'constant'], p.strategy || 'median', true)), (p.strategy === 'constant') ? field('Constant value (JSON scalar)', input('param-value', state.operation.constantDraft ?? JSON.stringify(p.value === undefined ? 'Unknown' : p.value), { oninput: event => { state.operation.constantDraft = event.target.value; invalidatePreview(); } }), 'Use a JSON string ("Unknown"), number (0), or boolean (false).') : el('p', { class: 'muted' }, 'The fill value is calculated from the active snapshot. Mean and median require numeric data.')];
   if (kind === 'case') return [field('Letter case', paramSelect('mode', 'param-mode', ['lower', 'upper', 'title'], p.mode || 'lower'))];
   if (kind === 'map_categories') return [field('Category mapping (JSON object)', el('textarea', { id: 'param-mapping', class: 'control', placeholder: '{"NY": "New York", "ny": "New York"}', oninput: event => update('mapping', event.target.value) }, typeof p.mapping === 'string' ? p.mapping : JSON.stringify(p.mapping || {}, null, 2)), 'Map exact old values to replacement values. Unlisted categories stay unchanged.')];
   if (kind === 'outliers') return [rowIds(), field('Selected-row action', paramSelect('action', 'param-action', [['clip', 'Clip to explicit bounds'], ['remove', 'Remove selected rows']], p.action || 'clip', true)), (p.action || 'clip') === 'clip' ? el('div', { class: 'form-grid' }, field('Lower bound', paramInput('lower', 'param-lower', p.lower ?? '', { type: 'number', step: 'any' })), field('Upper bound', paramInput('upper', 'param-upper', p.upper ?? '', { type: 'number', step: 'any' }))) : el('div', { class: 'warning-box' }, 'Removing rows changes the dataset size. Statistical outliers can be legitimate observations.')];
   if (kind === 'drop_column') return [el('div', { class: 'warning-box' }, 'This removes the selected column from the new snapshot. The original and prior versions remain available.')];
   return [el('p', { class: 'muted' }, kind === 'trim' ? 'Remove leading and trailing whitespace from string values in the selected column.' : 'Replace positive and negative infinity in the selected column with null.')];
+}
+function numericReadiness() {
+  const column = state.profile.column_profiles.find(item => item.name === (state.operation.column || state.column));
+  const readiness = column?.numeric_conversion;
+  if (!readiness) return el('p', { class: 'muted' }, column?.numeric ? 'This column is already numeric.' : 'No safely parseable numeric text was found in this column.');
+  const selected = new Set();
+  const examples = readiness.invalid_examples || [];
+  const tokens = [...new Set(examples.map(item => item.value).filter(value => typeof value === 'string'))];
+  const configure = (kind, params) => { state.operation = { kind, column: column.name, params }; state.cleaningPreview = null; render(); };
+  return el('div', { class: 'stack', id: 'numeric-readiness' },
+    el('p', {}, `${fmt(readiness.parseable_count)} of ${fmt(readiness.present_count)} non-missing values are parseable (${pct(readiness.parseable_percentage)}). ${fmt(readiness.invalid_count)} invalid values; ${fmt(readiness.missing_count)} missing cells. Numeric analysis starts only after successful conversion.`),
+    readiness.invalid_count ? el('div', { class: 'warning-box' }, 'Full conversion is blocked while invalid values remain. No token is interpreted as zero or as a word-number.') : null,
+    examples.length ? table(['Row ID', 'Invalid value'], examples.map(item => [item.row_id, item.value]), { caption: 'Invalid numeric values' }) : null,
+    readiness.invalid_examples_truncated ? el('p', { class: 'muted' }, 'First 200 invalid cells shown; totals cover the full column. Token policies apply to every exact occurrence.') : null,
+    tokens.length ? el('div', { role: 'group', 'aria-label': 'Invalid tokens to replace with null' }, tokens.map(token => el('label', { class: 'check-field' }, el('input', { type: 'checkbox', onchange: event => { if (event.target.checked) selected.add(token); else selected.delete(token); } }), JSON.stringify(token)))) : null,
+    tokens.length ? button('Review selected tokens as null', () => { if (!selected.size) { showError(new Error('Select exact invalid tokens first.')); return; } configure('normalize_missing', { tokens: [...selected] }); }, 'secondary small') : null,
+    readiness.invalid_count ? button('Correct values with a mapping', () => configure('map_categories', { mapping: {} }), 'secondary small') : null);
 }
 function parseJson(text, label) { try { return JSON.parse(text); } catch { throw new Error(`${label} must be valid JSON.`); } }
 function readOperation() {
@@ -413,7 +449,7 @@ function readOperation() {
     params.row_ids = [...new Set(tokens.map(Number))];
   }
   if (['to_numeric', 'to_date'].includes(kind)) params.coerce = document.querySelector('#param-coerce').checked;
-  if (kind === 'to_date') { params.format = value('param-format'); if (!params.format?.trim()) throw new Error('Provide an explicit date format.'); }
+  if (kind === 'to_date') { params.format = value('param-format'); if (!params.format?.trim()) throw new Error('Provide an explicit date format.'); if (params.format === 'supported' && value('param-date-order')) params.date_order = value('param-date-order'); }
   if (kind === 'fill_missing') {
     params.strategy = value('param-strategy');
     if (params.strategy === 'constant') { params.value = parseJson(value('param-value'), 'Constant value'); if (params.value !== null && typeof params.value === 'object') throw new Error('Constant value must be a JSON scalar, not an array or object.'); }
@@ -441,11 +477,14 @@ async function previewOperation() {
 }
 function cleaningPreviewPanel() {
   const p = state.cleaningPreview;
-  const approval = el('input', { type: 'checkbox', id: 'approval', onchange: event => { document.querySelector('#apply-operation').disabled = !event.target.checked; } });
+  const approval = el('input', { type: 'checkbox', id: 'approval', disabled: p.no_changes, onchange: event => { document.querySelector('#apply-operation').disabled = p.no_changes || !event.target.checked; } });
+  const visibleValue = value => typeof value === 'string' ? el('code', { title: JSON.stringify(value) }, value.replace(/^\s+|\s+$/g, space => space.replace(/ /g, '\u2420').replace(/\t/g, '\u21e5').replace(/\r/g, '\\r').replace(/\n/g, '\\n'))) : value;
   const node = panel('Review this exact change', `Preview for snapshot v${p.version}, revision ${state.reviewedRevision}. No data has changed yet.`, el('div', {},
     el('div', { class: 'preview-stats' }, el('div', {}, el('strong', {}, fmt(p.affected_cells)), el('span', {}, 'cells affected')), el('div', {}, el('strong', {}, fmt(p.affected_rows)), el('span', {}, 'rows affected')), el('div', {}, el('strong', {}, `${fmt(p.rows_removed)} / ${fmt(p.rows_added)}`), el('span', {}, 'rows removed / added'))),
     el('div', { class: 'panel-body', style: 'padding-top:0' }, el('pre', { class: 'code-block' }, JSON.stringify(p.operation, null, 2))), comparison(p),
-    table(['Row ID', 'Column', 'Before', 'After'], (p.changes || []).map(c => [c.row_id, c.column, c.before, c.after]), { caption: 'Cleaning change preview' }),
+    p.no_changes ? el('p', { class: 'info-box' }, 'No values or column types changed. No version will be created.') : null,
+    p.schema_changed ? el('p', { class: 'info-box' }, 'Column types or columns change in this preview.') : null,
+    table(['Row ID', 'Column', 'Before', 'After'], (p.changes || []).map(c => [c.row_id, c.column, visibleValue(c.before), visibleValue(c.after)]), { caption: 'Cleaning change preview' }),
     el('div', { class: 'panel-body stack', style: 'gap:14px' }, el('p', { class: 'muted' }, 'The table may be a bounded sample of changes. Counts and before/after metrics cover the complete operation.'), el('label', { class: 'check-field' }, approval, 'I reviewed the operation, affected rows, and potential data loss. I approve this exact change.'),
       button('Approve & apply', () => applyPreview(), '', { id: 'apply-operation', disabled: true }), button('Discard preview', () => { state.cleaningPreview = null; render(); }, 'ghost'))), badge('NOT APPLIED', 'warning'));
   node.id = 'cleaning-preview'; return node;

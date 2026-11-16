@@ -13,12 +13,12 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_bool_dtype, is_datetime64_any_dtype, is_integer_dtype, is_numeric_dtype
 
-from .analysis import json_safe, profile
+from .analysis import _date_value, json_safe, profile
 from .ingestion import numeric_candidate
 
 _PARAMS = {
     "trim": set(), "normalize_missing": {"tokens"}, "drop_duplicates": {"row_ids"},
-    "to_numeric": {"coerce"}, "to_date": {"format", "coerce"},
+    "to_numeric": {"coerce"}, "to_date": {"format", "coerce", "date_order"},
     "fill_missing": {"strategy", "value"}, "drop_column": set(), "case": {"mode"},
     "map_categories": {"mapping"}, "handle_infinity": set(),
     "outliers": {"row_ids", "action", "lower", "upper"},
@@ -48,8 +48,12 @@ def validate_operation(operation: dict) -> tuple[str, str | None, dict]:
             raise ValueError("Select exact string tokens to normalize")
     if kind in {"to_numeric", "to_date"} and not isinstance(params.get("coerce", False), bool):
         raise ValueError("coerce must be a boolean")
-    if kind == "to_date" and (not isinstance(params.get("format"), str) or not params["format"] or "%" not in params["format"] or params["format"] in {"mixed", "ISO8601"}):
-        raise ValueError("Date conversion requires an explicit strptime format")
+    if kind == "to_date":
+        date_format = params.get("format")
+        if not isinstance(date_format, str) or (date_format != "supported" and "%" not in date_format):
+            raise ValueError("Date conversion requires an explicit strptime format or supported formats")
+        if "date_order" in params and (date_format != "supported" or params["date_order"] not in {"day_first", "month_first"}):
+            raise ValueError("Select day_first or month_first for supported formats")
     if kind == "case" and params.get("mode") not in ("lower", "upper", "title"):
         raise ValueError("Case mode must be lower, upper or title")
     if kind == "map_categories":
@@ -219,6 +223,18 @@ def apply_operation(df: pd.DataFrame, operation: dict) -> pd.DataFrame:
                 if pd.isna(value):
                     values.append(pd.NaT)
                     continue
+                if params["format"] == "supported":
+                    parsed, _, ambiguous = _date_value(value)
+                    if ambiguous:
+                        if not params.get("date_order"):
+                            raise ValueError("Ambiguous dates require an explicit day/month order, even with coerce enabled")
+                        separator = "/" if "/" in value else "-"
+                        order = "%d{0}%m{0}%Y" if params["date_order"] == "day_first" else "%m{0}%d{0}%Y"
+                        parsed = datetime.strptime(value, order.format(separator))
+                    if parsed is None and not params.get("coerce", False):
+                        raise ValueError("Date conversion contains invalid values; correct them or explicitly approve conversion to null")
+                    values.append(parsed if parsed is not None else pd.NaT)
+                    continue
                 try:
                     # strptime prevents pandas accepting a different date separator.
                     if not isinstance(value, str):
@@ -229,7 +245,7 @@ def apply_operation(df: pd.DataFrame, operation: dict) -> pd.DataFrame:
                         raise ValueError("Date conversion failed for the selected exact format") from None
                     values.append(pd.NaT)
             # UTC gives a single Parquet-compatible dtype for explicit timezone formats.
-            utc = "%z" in params["format"] or "%Z" in params["format"]
+            utc = params["format"] == "supported" or "%z" in params["format"] or "%Z" in params["format"]
             result[column] = pd.Series(pd.to_datetime(values, errors="coerce" if params.get("coerce", False) else "raise", utc=utc), index=series.index)
         elif kind == "fill_missing":
             result[column] = _fill(series, params)
@@ -291,4 +307,6 @@ def preview_operation(df: pd.DataFrame, operation: dict) -> dict:
         changes.append({"row_id": int(row_id), "column": column, "before": json_safe(old), "after": json_safe(new)})
     return {"operation": copy.deepcopy(operation), "affected_cells": cells, "affected_rows": int(affected.sum()),
             "rows_removed": len(removed_ids), "rows_added": len(added_ids), "changes": changes,
-            "changes_truncated": cells > len(changes), "metrics_before": profile(df), "metrics_after": profile(after)}
+            "changes_truncated": cells > len(changes), "no_changes": df.equals(after),
+            "schema_changed": not df.dtypes.equals(after.dtypes),
+            "metrics_before": profile(df), "metrics_after": profile(after)}

@@ -54,11 +54,15 @@ class AnomalyRequest(StrictModel):
 class DomainRule(StrictModel):
     min: float | None = Field(default=None, allow_inf_nan=False)
     max: float | None = Field(default=None, allow_inf_nan=False)
+    integer: bool = Field(default=False, strict=True)
+    exclusive_min: bool = Field(default=False, strict=True)
 
     @model_validator(mode='after')
     def check_bounds(self):
-        if self.min is None and self.max is None:
-            raise ValueError('Specify a minimum or maximum.')
+        if self.min is None and self.max is None and not self.integer:
+            raise ValueError('Specify a minimum, maximum, or integer requirement.')
+        if self.exclusive_min and self.min is None:
+            raise ValueError('An exclusive minimum requires min.')
         if self.min is not None and self.max is not None and self.min > self.max:
             raise ValueError('Minimum cannot exceed maximum.')
         return self
