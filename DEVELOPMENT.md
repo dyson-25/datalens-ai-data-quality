@@ -19,6 +19,20 @@ git diff --check
 
 Browser tests own isolated storage and a separate restart-test process. Do not configure them against a real-user server/store. This verification neither calls a live AI provider nor requires a push/deployment.
 
+## Loading UI regression
+
+The frontend-only loading refinement passed `npm run check`, `npm run build`, and **40 Chromium workflows** (all 34 existing workflows plus six loading tests). No Python/backend changes were made; the Python suite was not rerun for this refinement. The build reported only the existing outdated Browserslist database warning. An initial new mobile assertion sampled layout immediately after resizing; it now waits for responsive layout to settle while retaining the same no-overflow requirement. The final full run had no failures or skips.
+
+Loading uses a shared 72px-wide, 3px-high mint indeterminate track, with a static segment under `prefers-reduced-motion`. Status text distinguishes upload, sample preparation, queued/running ingestion, profiling, quality detection, approved apply and exports. Repeated polling messages do not replace the live-region content or restart the animation. The polite atomic status remains outside the busy workspace; native disabled controls prevent duplicate actions, while keyboard navigation/theme controls remain available. Success retains its checkmark and accent background; errors retain the separate alert treatment. Polling intervals, job/session handling, APIs and transformations are unchanged.
+
+Run the focused coverage after building local assets:
+
+```bash
+npm run test:browser -- tests/browser/loading.spec.js
+```
+
+[Loading tests](tests/browser/loading.spec.js) hold real API responses to observe intermediate states, inject queued/running job presentation and one synthetic 422 failure, then resume real backend operations. They cover duplicate upload prevention, restored controls, keyboard retry/dismiss/theme actions, success/error transitions, animation properties, static reduced motion, and the active-version CSV download. Four viewport/theme/motion combinations cover desktop (1440×1000) and mobile (390×844). Screenshots are generated under `test-results/artifacts/`; desktop/mobile loading, ingestion, success and error captures were visually inspected. Existing workflow tests continue covering ingestion, cleaning approval, immutable versions, undo/redo and authorized exports. No existing tests were removed or weakened.
+
 ## Working safely
 
 Follow [INSTALLATION.md](INSTALLATION.md), reuse an existing Python 3.12 `.venv`, and preserve private `.env` contents. Do not commit generated storage, uploaded files, tokens, provider keys, local reports or private reference PDFs. Use synthetic datasets for tests and examples.

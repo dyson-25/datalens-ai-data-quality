@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tailwindcss -i frontend/tailwind.css -o frontend/styles.css --minify && node frontend/build.mjs",
-    "check": "node --check frontend/app.js && node --check frontend/api.js && node --check frontend/charts.js && node --check frontend/ui.js && node --check frontend/api-docs.js && node --check frontend/build.mjs && node --check playwright.config.js && node --check tests/browser/workbench.spec.js && node --check tests/browser/full-verification.spec.js && node --check tests/browser/restart.spec.js && node --check tests/browser/fixtures.js && node --check tests/browser/server.mjs && node --check tests/browser/install.mjs",
+    "check": "node --check frontend/app.js && node --check frontend/api.js && node --check frontend/charts.js && node --check frontend/ui.js && node --check frontend/api-docs.js && node --check frontend/build.mjs && node --check playwright.config.js && node --check tests/browser/workbench.spec.js && node --check tests/browser/full-verification.spec.js && node --check tests/browser/restart.spec.js && node --check tests/browser/loading.spec.js && node --check tests/browser/fixtures.js && node --check tests/browser/server.mjs && node --check tests/browser/install.mjs",
     "install:browser": "node tests/browser/install.mjs",
     "test:browser": "playwright test",
     "test:browser:ui": "playwright test --ui"

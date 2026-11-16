@@ -21,9 +21,13 @@ let noticeTimer;
 function scrollSection(selector) {
   document.querySelector(selector)?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
 }
-function announce(message, loading = false) {
+function announce(message, loading = false, detail = '') {
+  const tone = loading ? 'loading' : 'success';
+  if (!notice.hidden && notice.dataset.state === tone && notice.textContent === message + detail) return;
   clearTimeout(noticeTimer);
-  notice.replaceChildren(loading ? el('span', { class: 'spinner', 'aria-hidden': 'true' }) : icon('check'), el('span', {}, message));
+  notice.dataset.state = tone;
+  notice.replaceChildren(loading ? el('span', { class: 'loading-progress', 'aria-hidden': 'true' }) : icon('check'),
+    el('div', { class: 'status-copy' }, el('span', {}, message), detail ? el('small', {}, detail) : null));
   notice.hidden = false;
   if (!loading) noticeTimer = setTimeout(() => { notice.hidden = true; }, 9000);
 }
@@ -90,7 +94,9 @@ async function refreshDataset(attempt = 0) {
   // Frame-processing endpoints share a bounded backend semaphore; read them serially.
   const meta = await datasetApi();
   if (meta.active_version === null || meta.active_version < 0) { state.meta = meta; return; }
+  announce('Profiling columns', true);
   const profile = await datasetApi('/profile');
+  announce('Detecting quality issues', true);
   const issues = (await datasetApi('/quality')).issues;
   const recommendations = (await datasetApi('/recommendations')).recommendations;
   const preview = await datasetApi('/preview?offset=0&limit=25');
@@ -148,11 +154,11 @@ async function uploadFile(file) {
   if (!/\.(csv|xlsx)$/i.test(file.name)) { showError(new Error('Unsupported file type. Choose a .csv or .xlsx file.')); return; }
   if (file.size === 0) { showError(new Error('This file is empty. Choose a CSV or XLSX file containing data.')); return; }
   if (!await mayReplace()) return;
-  run('Uploading and inspecting your file…', async () => { const body = new FormData(); body.append('file', file); acceptUpload(await api('/datasets/upload', { method: 'POST', body })); });
+  run('Uploading and inspecting file', async () => { const body = new FormData(); body.append('file', file); acceptUpload(await api('/datasets/upload', { method: 'POST', body })); });
 }
 async function uploadSample(id) {
   if (state.busy || !await mayReplace()) return;
-  run('Preparing the sample dataset…', async () => acceptUpload(await api(`/datasets/sample/${encodeURIComponent(id)}`, { method: 'POST' })));
+  run('Preparing sample dataset', async () => acceptUpload(await api(`/datasets/sample/${encodeURIComponent(id)}`, { method: 'POST' })));
 }
 function acceptUpload(result) {
   clearDatasetState(); state.meta = { dataset_id: result.dataset_id, filename: result.filename, active_version: result.active_version ?? null, revision: result.revision ?? 0 };
@@ -186,7 +192,7 @@ function inspectionPanel() {
   return panel(`Configure · ${state.meta.filename}`, 'Inspect the source, then create an immutable baseline snapshot.', el('div', {}, el('div', { class: 'panel-body' }, controls,
     Array.isArray(info.warnings) ? info.warnings.map(w => el('p', { class: 'warning-box section-gap' }, valueText(w))) : null,
     el('div', { class: 'button-row section-gap' }, button(isLoaded() ? 'Dataset already ingested' : state.job ? 'Check ingestion job' : 'Ingest dataset', () => run('Ingesting your dataset…', ingest), '', { disabled: isLoaded(), id: 'ingest-button' }), el('span', { class: 'muted' }, isLoaded() ? 'Upload the source again to choose different parsing options.' : 'No cleaning changes are applied during ingestion.'))),
-    state.jobStatus ? el('div', { class: 'job-status', role: 'status' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), state.jobStatus) : null,
+    state.jobStatus ? el('div', { class: 'job-status' }, state.jobStatus) : null,
     previewNode), badge(String(info.format || 'FILE').toUpperCase()), 'section-gap');
 }
 async function ingest() {
@@ -204,7 +210,7 @@ async function pollJob() {
   const deadline = Date.now() + 5 * 60 * 1000;
   while (Date.now() < deadline) {
     const result = await datasetApi(`/jobs/${encodeURIComponent(state.job)}`);
-    state.jobStatus = result.status === 'queued' ? 'Queued — waiting for the analysis engine…' : 'Processing — creating your baseline snapshot…';
+    state.jobStatus = result.status === 'queued' ? 'Waiting for analysis engine' : 'Creating baseline snapshot';
     if (result.status === 'succeeded') {
       state.job = null; state.jobStatus = ''; saveSession();
       await refreshDataset(); go('overview'); render(); return;
@@ -213,7 +219,9 @@ async function pollJob() {
       state.job = null; state.jobStatus = ''; saveSession(); render();
       throw new Error(typeof result.error === 'string' ? result.error : result.error?.message || 'Ingestion failed. Review the file and parsing options, then try again.');
     }
-    announce(state.jobStatus, true);
+    announce(state.jobStatus, true, result.status === 'queued'
+      ? 'Ingestion is queued. Keep this tab open; no need to submit again.'
+      : 'Larger files can take longer. Keep this tab open; the original file is preserved.');
     await delay(850);
   }
   state.jobStatus = 'The job is still running. Use “Check ingestion job” to reconnect.'; render();
@@ -445,7 +453,7 @@ function cleaningPreviewPanel() {
 async function applyPreview() {
   if (!document.querySelector('#approval')?.checked || !state.cleaningPreview) return;
   if (!await confirmAction('Apply the reviewed transformation?', 'A new version will be created from this exact preview. The original stays intact, and you can undo this operation.', 'Apply change')) return;
-  run('Applying the approved transformation…', async () => {
+  run('Applying approved transformation', async () => {
     const reviewed = state.cleaningPreview;
     if (!reviewed) throw new Error('The preview is no longer current. Generate a new preview.');
     await datasetApi('/cleaning/apply', { method: 'POST', body: { preview_id: reviewed.preview_id, expected_version: reviewed.version, expected_revision: state.reviewedRevision, approved: true } });
@@ -455,7 +463,7 @@ async function applyPreview() {
 async function navigateVersion(action, version) {
   const destructive = ['reset', 'restore'].includes(action);
   if (destructive && !await confirmAction(action === 'reset' ? 'Return to the original snapshot?' : `Restore snapshot v${version}?`, 'The active view will change and any pending preview will be discarded. Saved versions are retained; the revision counter will advance.', action === 'reset' ? 'Reset to original' : 'Restore version')) return;
-  run(`${humanize(action)}ing the active snapshot…`, async () => {
+  run({ undo: 'Undoing transformation', redo: 'Redoing transformation', reset: 'Restoring original snapshot', restore: 'Restoring saved snapshot' }[action], async () => {
     const body = { ...expected(), ...(version !== undefined ? { version } : {}) };
     await datasetApi(`/${action}`, { method: 'POST', body });
     state.redoCount = action === 'undo' ? state.redoCount + 1 : action === 'redo' ? Math.max(0, state.redoCount - 1) : 0;
@@ -491,7 +499,7 @@ function exportsView() {
     panel('Workspace lifecycle', `The private capability is stored only for this browser tab. This session expires at ${new Date(state.meta.expires_at * 1000).toLocaleString()}; download your work before then. Server cleanup removes the original and all snapshots after expiry.`,  el('div', { class: 'panel-body button-row' }, button('Delete this dataset', deleteDataset, 'danger')), null, 'section-gap')];
 }
 function download(path, extension) {
-  run('Preparing your authorized download…', async () => {
+  run('Generating export', async () => {
     const { blob, filename } = await datasetApi(path, { attachment: true });
     const url = URL.createObjectURL(blob);
     const downloadName = (filename || `dataset.${extension}`).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_');
@@ -500,7 +508,7 @@ function download(path, extension) {
   });
 }
 function printReport() {
-  run('Preparing the printable HTML report…', async () => {
+  run('Preparing printable report', async () => {
     const blob = await datasetApi('/report?format=html', { blob: true });
     const frame = el('iframe', { title: 'Printable quality report', sandbox: 'allow-same-origin allow-modals', style: 'position:fixed;width:1px;height:1px;left:-10000px;top:0;border:0' });
     const clean = () => frame.remove();
